@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """omp quota desktop widget: borderless, desktop-level (below all app windows), dark; data from `omp usage --json`.
 
-Run with pythonw (no console). Drag anywhere to move; position is remembered.
+Run with pythonw (no console). Drag anywhere to move; position is remembered and the window is
+kept fully inside the nearest monitor's work area (on start, drag, and display/resolution changes).
 Right-click menu: Refresh / Force refresh / Open web panel / Quit. Stdlib only.
 """
 import ctypes
@@ -12,6 +13,7 @@ import threading
 import time
 import tkinter as tk
 import webbrowser
+from ctypes import wintypes
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -19,6 +21,7 @@ STATE = HERE / "widget-state.json"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 REFRESH_MS = 60_000
 TICK_MS = 30_000
+GUARD_MS = 2_000  # re-clamp on resolution/monitor/taskbar changes (Tk calls from a wndproc crash)
 WEB_URL = "http://127.0.0.1:8788"
 
 BG = "#16181d"
@@ -140,6 +143,27 @@ def virtual_screen(root):
         return 0, 0, root.winfo_screenwidth(), root.winfo_screenheight()
 
 
+class MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+
+def work_area(x, y):
+    """Work area (taskbar excluded) of the monitor nearest to (x, y); None if unavailable."""
+    try:
+        u = ctypes.windll.user32
+        u.MonitorFromPoint.restype = wintypes.HMONITOR
+        u.MonitorFromPoint.argtypes = (wintypes.POINT, wintypes.DWORD)
+        u.GetMonitorInfoW.argtypes = (wintypes.HMONITOR, ctypes.POINTER(MONITORINFO))
+        mi = MONITORINFO(cbSize=ctypes.sizeof(MONITORINFO))
+        if not u.GetMonitorInfoW(u.MonitorFromPoint(wintypes.POINT(x, y), 2), ctypes.byref(mi)):  # NEAREST
+            return None
+        r = mi.rcWork
+        return r.left, r.top, r.right, r.bottom
+    except (AttributeError, OSError):
+        return None
+
+
 class Widget:
     def __init__(self):
         self.root = root = tk.Tk()
@@ -194,6 +218,7 @@ class Widget:
         self.render()
         self.auto_refresh()
         root.after(TICK_MS, self.tick)
+        root.after(GUARD_MS, self.guard)
 
     def px(self, n):
         return int(round(n * self.k))
@@ -268,6 +293,8 @@ class Widget:
         self.root.update_idletasks()
         if not self.placed:
             self.place()
+        else:
+            self.keep_on_screen()  # height may have grown past the bottom edge
 
     def header(self, rep, line, top):
         f = tk.Frame(self.body, bg=BG)
@@ -393,22 +420,39 @@ class Widget:
 
     def place(self):
         self.placed = True
-        x0, y0, x1, y1 = virtual_screen(self.root)
         width = self.root.winfo_reqwidth()
         try:
             x, y = int(self.state["x"]), int(self.state["y"])
         except (ValueError, KeyError, TypeError):
             x, y = self.root.winfo_screenwidth() - width - self.px(24), self.px(80)
-        x = min(max(x, x0), x1 - self.px(60))  # keep on-screen after monitor changes
-        y = min(max(y, y0), y1 - self.px(40))
+        x, y = self.clamp(x, y)
         self.root.geometry(f"+{x}+{y}")
+
+    def clamp(self, x, y):
+        """Top-left position that keeps the whole window inside the nearest monitor's work area."""
+        w, h = self.root.winfo_width(), self.root.winfo_height()
+        if w <= 1:  # not mapped yet
+            w, h = self.root.winfo_reqwidth(), self.root.winfo_reqheight()
+        l, t, r, b = work_area(x + w // 2, y + h // 2) or virtual_screen(self.root)
+        return max(l, min(x, r - w)), max(t, min(y, b - h))
+
+    def keep_on_screen(self):
+        x, y = self.root.winfo_x(), self.root.winfo_y()
+        nx, ny = self.clamp(x, y)
+        if (nx, ny) != (x, y):
+            self.root.geometry(f"+{nx}+{ny}")
+
+    def guard(self):
+        self.keep_on_screen()
+        self.root.after(GUARD_MS, self.guard)
 
     def drag_start(self, e):
         self.drag = (e.x_root - self.root.winfo_x(), e.y_root - self.root.winfo_y())
 
     def drag_move(self, e):
         dx, dy = self.drag
-        self.root.geometry(f"+{e.x_root - dx}+{e.y_root - dy}")
+        x, y = self.clamp(e.x_root - dx, e.y_root - dy)
+        self.root.geometry(f"+{x}+{y}")
 
     def save_state(self):
         self.state.update(x=self.root.winfo_x(), y=self.root.winfo_y())

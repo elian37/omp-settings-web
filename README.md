@@ -49,7 +49,7 @@
 
 **Desktop widget** (`widget.py`)
 
-- A borderless dark mini window pinned to the desktop layer (never covers other apps) showing every provider's rate-limit windows from `omp usage --json` — compact bars showing remaining quota (colored by how much is left), remaining %, reset countdown, and a badge for saved reset credits. Runs standalone (no dependency on the web server), refreshes every 60 s, drag anywhere to move (position is remembered), right-click for refresh / force-refresh / open web panel / quit. Single-instance guarded; Win11 rounded corners; per-monitor DPI aware; `omp` subprocesses run without console windows.
+- A borderless dark mini window pinned to the desktop layer (never covers other apps) showing every provider's rate-limit windows from `omp usage --json` — compact bars showing remaining quota (colored by how much is left), remaining %, reset countdown, and a badge for saved reset credits. Runs standalone (no dependency on the web server), refreshes every 60 s, drag anywhere to move (position is remembered; the window is always kept fully inside the nearest monitor's work area, including after resolution/monitor/taskbar changes), right-click for refresh / force-refresh / open web panel / quit. Single-instance guarded; Win11 rounded corners; per-monitor DPI aware; `omp` subprocesses run without console windows.
 - Custom provider order: right-click a provider header for **Move up / Move down / Reset order**. The order is saved per machine in `widget-state.json` as `"order": ["openai-codex", "google-antigravity", ...]` (can also be edited by hand while the widget is closed); listed providers come first, unlisted ones keep omp's order after them.
 
 ## Requirements
