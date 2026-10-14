@@ -56,6 +56,7 @@
 
 - Python 3.8+（纯标准库，零第三方依赖）
 - [omp](https://github.com/can1357/oh-my-pi) 已安装并在 `PATH` 上（用于 `omp models --json`）
+- 桌面小窗（`widget.py`）**仅支持 Windows**：它靠 Win32 调用把窗口固定在桌面层、启用 Win11 圆角并按显示器做 DPI 适配，这些接口其他系统都没有。网页面板（`server.py`）是纯 Python，任何系统都能跑。
 
 ## 使用
 
@@ -64,7 +65,7 @@ python server.py            # 启动 http://127.0.0.1:8788 并自动打开浏览
 python server.py --no-browser
 ```
 
-桌面小窗：
+桌面小窗（Windows）：
 
 ```bash
 pythonw widget.py           # 无控制台窗口；右键小窗调出菜单

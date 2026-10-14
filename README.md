@@ -56,6 +56,7 @@
 
 - Python 3.8+ (standard library only, zero dependencies)
 - [omp](https://github.com/can1357/oh-my-pi) installed and on `PATH` (used for `omp models --json`)
+- **Windows** for the desktop widget (`widget.py`): it pins itself to the desktop layer, keeps Win11 rounded corners and is per-monitor DPI aware through Win32 calls, none of which exist elsewhere. The web panel (`server.py`) is plain Python and runs on any OS.
 
 ## Usage
 
@@ -64,7 +65,7 @@ python server.py            # starts http://127.0.0.1:8788 and opens your browse
 python server.py --no-browser
 ```
 
-Desktop widget:
+Desktop widget (Windows):
 
 ```bash
 pythonw widget.py           # no console window; right-click the widget for the menu
