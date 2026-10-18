@@ -136,6 +136,48 @@
   .roles-intro { font-size: 12px; color: #8b93a1; line-height: 1.7; margin-bottom: 12px;
                  padding: 10px 14px; border: 1px solid #2a2e37; border-radius: 8px;
                  background: #1c1f26; }
+  /* ---------- 故障兜底（retry.fallbackChains） ---------- */
+  .fb-sec .grp { margin-top: 22px; }
+  .fb-sec select { display: inline-block; width: auto; min-width: 90px; }
+  .fb-ed { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #2a2e37; }
+  .fb-entry { display: flex; align-items: center; gap: 6px; margin: 5px 0; flex-wrap: wrap; }
+  .fb-entry select { min-width: 70px; max-width: 300px; }
+  .fb-entry .ord { color: #6b7280; font-size: 11px; width: 18px; text-align: right;
+                   font-family: Consolas, monospace; }
+  .fb-entry button { padding: 2px 8px; font-size: 12px; }
+  .fb-mode { margin-right: 8px; }
+  .fb-ops { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+  .fb-view { font-family: Consolas, monospace; font-size: 12px; color: #9fd0ff;
+             word-break: break-all; }
+  /* ---------- Ctrl+P 轮换顺序（cycleOrder） ---------- */
+  .cy-sec .grp { margin-top: 22px; }
+  .cy-name { font-weight: 600; font-size: 13px; width: 90px; overflow-wrap: anywhere; }
+  .cy-warn { color: #e0c98e; font-size: 12px; }
+  .cy-sec .fb-entry > .fb-view, .cy-sec .fb-entry > .cy-warn { flex: 1; min-width: 0; }
+  .cy-add { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  .cy-bind { display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+             flex-basis: 100%; margin: 4px 0 2px 24px; }
+  .cy-dirty { font-size: 12px; color: #e0c98e; }
+  @media (max-width: 700px) {
+    body { padding: 16px; }
+    .tabs { flex-wrap: wrap; }
+    .tabs button { padding: 7px 12px; }
+    .role { display: grid; grid-template-columns: minmax(0, 1fr) auto;
+            align-items: start; gap: 8px 12px; }
+    .role .name { width: auto; grid-column: 1; order: 1; }
+    .role > button { grid-column: 2; order: 5; justify-self: end; }
+    .role > button:first-of-type { order: 1; }
+    .role .value { grid-column: 1 / -1; order: 2; min-width: 0;
+                   overflow-wrap: anywhere; }
+    .role .rdesc { grid-column: 1 / -1; order: 3; }
+    .role.editing select { grid-column: 1 / -1; order: 4;
+                           width: 100%; min-width: 0; max-width: 100%; }
+    .roles-intro, .row .key { overflow-wrap: anywhere; }
+    .fb-sec select { min-width: 0; max-width: 100%; }
+    .fb-entry select { max-width: 100%; }
+    .cy-sec select, .cy-sec input[type=text] { min-width: 0; max-width: 100%; }
+    .cy-bind { margin-left: 0; }
+  }
 </style>
 </head>
 <body>
@@ -273,6 +315,43 @@ const T = {
     uRedeemConfirm: p => `将消耗 ${p} 的 1 张额度券，重置其用量限额（不可逆）。确认继续？`,
     uRedeemDone: '已消耗 1 张额度券并重置用量',
     uRedeeming: '正在消耗额度券…',
+    fbTitle: '故障兜底',
+    fbIntro: 'retry.fallbackChains：模型请求失败时按顺序切换的备选模型链。键可以是模型角色（如 default）、具体模型 provider/model，或供应商通配 provider/*。模型类键（provider/model、provider/*）优先于角色键，只要当前主模型匹配就生效、与所在角色无关；没有配置模型键时按当前角色查链，角色没配链则继承 default 的链。注意：image / web / speech / dictation / judge / memory 等模型种类角色用自己的链，不走 default。条目可带思考档后缀（如 :high），不带则继承失败轮的思考档；条目也可以是 provider/*（保留失败模型的 id、只换供应商）或 openrouter/google/* 这类带前缀通配。空链表示显式禁止回退。',
+    fbMF: '模型回退 retry.modelFallback',
+    fbMFHint: '总开关：允许出错重试时切到 fallbackChains 里的模型；关闭则只在原模型上重试。',
+    fbOn: '触发条件 retry.fallbackOn',
+    fbOnAny: '任意错误', fbOnLimit: '仅额度耗尽', fbOnExcept: '额度耗尽除外',
+    fbRev: '返回策略 retry.fallbackRevertPolicy',
+    fbRevCooldown: '冷却结束即返回 cooldown-expiry', fbRevNever: '留在回退模型 never',
+    fbStUnset: '未配置', fbStEmpty: '已禁用', fbStCustom: '自定义',
+    fbModeUnset: '未配置（跟随角色/default 链）',
+    fbModeEmpty: '显式禁用回退',
+    fbModeCustom: '自定义链',
+    fbKeyRole: '角色', fbKeyModel: '模型', fbKeyWild: '通配',
+    fbEffUnset: '按查找规则生效', fbEffEmpty: '已禁用',
+    fbAdd: '+ 添加条目',
+    fbInherit: '继承思考档',
+    fbWild: p => `${p}/*（整个供应商）`,
+    fbSaved: k => `${k} 的回退链已保存（已备份 config.yml）`,
+    fbLoadFailed: '回退链配置读取失败',
+    cyTitle: 'Ctrl+P 轮换顺序',
+    cyIntro: d => `cycleOrder：在会话中按 Ctrl+P 时，按这里的顺序在各角色绑定的模型之间循环切换。可加入已有角色，也可输入自定义角色名（如 e、fast）；自定义角色需要先绑定模型，Ctrl+P 才有对应的模型可切换。未自定义时 omp 使用默认顺序 ${d}。`,
+    cyStCustom: '已自定义', cyStDefault: '默认顺序',
+    cyCurrent: '当前轮换',
+    cyUnbound: '未绑定模型', cyBind: '绑定模型',
+    cyAddRole: '+ 加入角色', cyNoRoles: '已有角色都在列表中',
+    cyCustomPh: '自定义角色名', cyAddCustom: '+ 加入自定义角色',
+    cyEmpty: '列表为空：至少保留一个角色，或点「恢复默认」。',
+    cyBadName: '角色名只能包含字母、数字、下划线、点和连字符，不能带 @ 或空格',
+    cyDup: n => `${n} 已在轮换列表中`,
+    cySaved: '轮换顺序已保存（已备份 config.yml）',
+    cyReset: '恢复默认',
+    cyResetConfirm: d => `删除 cycleOrder 配置，恢复 omp 默认顺序 ${d}？`,
+    cyResetDone: '已恢复默认轮换顺序',
+    cyDirty: '有未保存的修改',
+    cyLoadFailed: '轮换顺序读取失败',
+    cyUp: '上移', cyDown: '下移', cyRemove: '移出轮换',
+    cyProvider: '供应商', cyModel: '模型',
   },
   en: {
     title: 'omp Settings Web',
@@ -350,6 +429,43 @@ const T = {
     uRedeemConfirm: p => `This spends 1 saved reset credit for ${p} and resets its usage limit (irreversible). Continue?`,
     uRedeemDone: 'Spent 1 reset credit — usage reset',
     uRedeeming: 'Spending reset credit…',
+    fbTitle: 'Failure Fallback',
+    fbIntro: 'retry.fallbackChains: ordered backup models a failed request switches to. Keys may be model roles (e.g. default), concrete models provider/model, or provider wildcards provider/*. Model-oriented keys beat role keys — they fire whenever the active primary matches, regardless of the calling role; with no matching model key the chain is looked up by role, and a role without a chain inherits default\'s. Note: model-kind roles such as image / web / speech / dictation / judge / memory consult their own chains, never default\'s. Entries may carry a thinking suffix (e.g. :high); without one they inherit the failing turn\'s effort. An entry may also be provider/* (keeps the failing model id, swaps only the provider) or a prefixed wildcard like openrouter/google/*. An empty chain means fallback explicitly disabled.',
+    fbMF: 'Model fallback retry.modelFallback',
+    fbMFHint: 'Master switch: lets error recovery switch to models in fallbackChains; off means retrying only on the original model.',
+    fbOn: 'Trigger retry.fallbackOn',
+    fbOnAny: 'any error', fbOnLimit: 'usage limit only', fbOnExcept: 'all but usage limits',
+    fbRev: 'Revert policy retry.fallbackRevertPolicy',
+    fbRevCooldown: 'revert on cooldown-expiry', fbRevNever: 'stay on fallback (never)',
+    fbStUnset: 'unset', fbStEmpty: 'disabled', fbStCustom: 'custom',
+    fbModeUnset: 'Unset (inherit role/default chain)',
+    fbModeEmpty: 'Explicitly disable fallback',
+    fbModeCustom: 'Custom chain',
+    fbKeyRole: 'role', fbKeyModel: 'model', fbKeyWild: 'wildcard',
+    fbEffUnset: 'applies via lookup rules', fbEffEmpty: 'disabled',
+    fbAdd: '+ Add entry',
+    fbInherit: 'inherit thinking',
+    fbWild: p => `${p}/* (whole provider)`,
+    fbSaved: k => `Fallback chain for ${k} saved (config.yml backed up)`,
+    fbLoadFailed: 'Failed to load fallback chains',
+    cyTitle: 'Ctrl+P Cycle Order',
+    cyIntro: d => `cycleOrder: pressing Ctrl+P in a session cycles through the models bound to these roles, in this order. Add existing roles or type a custom role name (e.g. e, fast); a custom role needs a model binding before Ctrl+P has a model to switch to. When not customized, omp uses the default order ${d}.`,
+    cyStCustom: 'customized', cyStDefault: 'default order',
+    cyCurrent: 'Current cycle',
+    cyUnbound: 'no model bound', cyBind: 'Bind model',
+    cyAddRole: '+ Add role', cyNoRoles: 'All existing roles are listed',
+    cyCustomPh: 'Custom role name', cyAddCustom: '+ Add custom role',
+    cyEmpty: 'The list is empty: keep at least one role, or use Restore default.',
+    cyBadName: 'Role names may contain only letters, digits, underscore, dot and hyphen — no @ or spaces',
+    cyDup: n => `${n} is already in the cycle`,
+    cySaved: 'Cycle order saved (config.yml backed up)',
+    cyReset: 'Restore default',
+    cyResetConfirm: d => `Remove cycleOrder and restore omp's default order ${d}?`,
+    cyResetDone: 'Default cycle order restored',
+    cyDirty: 'Unsaved changes',
+    cyLoadFailed: 'Failed to load cycle order',
+    cyUp: 'Move up', cyDown: 'Move down', cyRemove: 'Remove from cycle',
+    cyProvider: 'Provider', cyModel: 'Model',
   },
 };
 let LANG = localStorage.getItem('omp-ui-lang') === 'en' ? 'en' : 'zh';
@@ -443,6 +559,18 @@ async function load() {
   for (const [role, value] of Object.entries(r.roles)) {
     box.appendChild(roleRow(role, value));
   }
+  fb.roles = Object.keys(r.roles);
+  try {
+    const fr = await fetch('/api/fallback').then(x => x.json());
+    if (fr && fr.error) { fb.err = fr.error; fb.data = null; toast(t().failed(fr.error), true); }
+    else { fb.err = null; fb.data = fr; }
+  } catch (e) {
+    fb.err = String(e.message || e); fb.data = null;
+    toast(t().failed(fb.err), true);
+  }
+  await loadCycle(r.roles);
+  renderCycle(box);
+  renderFallback(box);
 }
 
 function roleRow(role, value) {
@@ -515,6 +643,489 @@ function roleRow(role, value) {
   };
   div.appendChild(edit);
   return div;
+}
+
+/* ---------- 故障兜底（retry.fallbackChains） ---------- */
+const fb = { data: null, err: null, roles: [] };
+const FB_THINK = ['', 'low', 'medium', 'high', 'xhigh', 'max', 'off'];
+const FB_KIND = { // 模型种类角色：用自己的链，不走 default
+  image: 1, web: 1, speech: 1, dictation: 1, judge: 1, memory: 1 };
+
+function fbSplit(e) { // 条目 = 基础选择器 + 可选 :思考档
+  const i = e.lastIndexOf(':');
+  if (i > 0 && FB_THINK.includes(e.slice(i + 1)))
+    return { base: e.slice(0, i), th: e.slice(i + 1) };
+  return { base: e, th: '' };
+}
+function fbProviders() { // 新选项只来自当前可见模型；既有失效条目由各行单独保留
+  const g = {};
+  for (const m of models) if (visibleSet.has(m.selector)) (g[m.provider] ??= []).push(m);
+  return g;
+}
+function fbOpt(sel, value, label) {
+  const o = document.createElement('option');
+  o.value = value; o.textContent = label; sel.appendChild(o); return o;
+}
+
+function fbState(chain) {
+  return chain === undefined ? 'unset' : (chain.length === 0 ? 'empty' : 'custom');
+}
+function fbBadge(chain) {
+  const st = fbState(chain);
+  const b = document.createElement('span');
+  b.className = 'badge ' + (st === 'unset' ? 'default' : st === 'empty' ? 'ro' : 'custom');
+  b.textContent = st === 'unset' ? t().fbStUnset : st === 'empty' ? t().fbStEmpty : t().fbStCustom;
+  return b;
+}
+
+function fbScalarRow(label, hint, key, value, options) { // 标量项走 /api/set-key
+  const div = document.createElement('div');
+  div.className = 'row';
+  div.dataset.setting = key;
+  const head = document.createElement('div');
+  head.className = 'head';
+  head.innerHTML = `<span class="zhname"></span><span class="key"></span>`;
+  head.querySelector('.zhname').textContent = label;
+  head.querySelector('.key').textContent = key;
+  const sel = document.createElement('select');
+  sel.setAttribute('aria-label', label);
+  for (const [v, lab] of options) fbOpt(sel, v, lab).selected = (v === value);
+  head.appendChild(sel);
+  const save = document.createElement('button');
+  save.className = 'save'; save.textContent = t().saveBtn;
+  save.onclick = async () => {
+    save.disabled = true;
+    try {
+      const r = await fetch('/api/set-key', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({key, value: sel.value})}).then(x => x.json());
+      if (r.ok) { toast(t().keySaved(key, sel.value)); await load(); }
+      else toast(t().failed(r.error), true);
+    } catch (e) {
+      toast(t().failed(e.message || e), true);
+    } finally { save.disabled = false; }
+  };
+  head.appendChild(save);
+  div.appendChild(head);
+  const d = document.createElement('div');
+  d.className = 'desc'; d.textContent = hint;
+  div.appendChild(d);
+  return div;
+}
+
+function fbEntryEditor(wchain, i, refresh) { // 单条链条目编辑行
+  const cur = fbSplit(wchain[i]);
+  const groups = fbProviders();
+  const row = document.createElement('div');
+  row.className = 'fb-entry';
+  const ord = document.createElement('span');
+  ord.className = 'ord'; ord.textContent = String(i + 1);
+  const psel = document.createElement('select');
+  const msel = document.createElement('select');
+  const tsel = document.createElement('select');
+  const curProv = cur.base.split('/')[0];
+  psel.setAttribute('aria-label', LANG === 'zh' ? '供应商' : 'Provider');
+  msel.setAttribute('aria-label', LANG === 'zh' ? '备用模型' : 'Fallback model');
+  tsel.setAttribute('aria-label', LANG === 'zh' ? '思考强度' : 'Thinking level');
+  const knownProv = curProv in groups;
+  for (const p of Object.keys(groups).sort()) fbOpt(psel, p, p);
+  if (!knownProv) fbOpt(psel, '__raw__', t().currentOpt(curProv)).selected = true;
+  else psel.value = curProv;
+  function fillM() {
+    msel.innerHTML = '';
+    if (psel.value === '__raw__') { fbOpt(msel, cur.base, cur.base); return; }
+    const p = psel.value;
+    if (cur.base === p + '/*') fbOpt(msel, cur.base, t().currentOpt(cur.base));
+    for (const m of groups[p] || []) fbOpt(msel, m.selector, m.name + '  (' + m.selector + ')');
+    const want = cur.base.startsWith(p + '/') ? cur.base : (groups[p] || [])[0]?.selector;
+    if (want && ![...msel.options].some(o => o.value === want))
+      fbOpt(msel, want, t().currentOpt(want)); // 隐藏/不在目录的既有条目保留
+    msel.value = want;
+  }
+  psel.onchange = () => { fillM(); upd(); };
+  for (const th of FB_THINK) fbOpt(tsel, th, th === '' ? t().fbInherit : ':' + th);
+  tsel.value = cur.th;
+  if (![...tsel.options].some(o => o.value === cur.th)) { // 未知后缀原样保留
+    fbOpt(tsel, cur.th, t().currentOpt(cur.th)).selected = true;
+  }
+  function upd() {
+    const base = psel.value === '__raw__' ? cur.base : msel.value;
+    wchain[i] = base + (tsel.value ? ':' + tsel.value : '');
+  }
+  msel.onchange = upd; tsel.onchange = upd;
+  fillM();
+  const up = document.createElement('button'); up.className = 'ghost'; up.textContent = '↑';
+  const dn = document.createElement('button'); dn.className = 'ghost'; dn.textContent = '↓';
+  const del = document.createElement('button'); del.className = 'ghost'; del.textContent = '✕';
+  up.setAttribute('aria-label', LANG === 'zh' ? '上移' : 'Move up');
+  dn.setAttribute('aria-label', LANG === 'zh' ? '下移' : 'Move down');
+  del.setAttribute('aria-label', LANG === 'zh' ? '删除' : 'Remove');
+  up.disabled = i === 0; dn.disabled = i === wchain.length - 1;
+  up.onclick = () => { [wchain[i-1], wchain[i]] = [wchain[i], wchain[i-1]]; refresh(); };
+  dn.onclick = () => { [wchain[i+1], wchain[i]] = [wchain[i], wchain[i+1]]; refresh(); };
+  del.onclick = () => { wchain.splice(i, 1); refresh(); };
+  row.append(ord, psel, msel, tsel, up, dn, del);
+  return row;
+}
+
+function fbChainRow(key) {
+  const chains = fb.data ? fb.data.chains || {} : {};
+  const chain = chains[key];
+  const isRole = fb.roles.includes(key);
+  const kind = isRole ? 'role' : (key.includes('*') ? 'wild' : 'model');
+  const div = document.createElement('div');
+  div.className = 'row';
+  div.dataset.chainKey = key;
+  const head = document.createElement('div');
+  head.className = 'head';
+  head.innerHTML = `<span class="zhname"></span><span class="key"></span>`;
+  head.querySelector('.zhname').textContent = isRole
+    ? key + (t().roleComment[key] ? ' · ' + t().roleComment[key] : '')
+    : key;
+  head.querySelector('.key').textContent = 'retry.fallbackChains.' + key;
+  const kt = document.createElement('span');
+  kt.className = 'badge default';
+  kt.textContent = kind === 'role' ? t().fbKeyRole : kind === 'wild' ? t().fbKeyWild : t().fbKeyModel;
+  head.append(kt, fbBadge(chain));
+  const edit = document.createElement('button');
+  edit.className = 'save'; edit.textContent = t().switchBtn;
+  head.appendChild(edit);
+  div.appendChild(head);
+  const view = document.createElement('div');
+  view.className = 'desc';
+  const eff = document.createElement('span');
+  eff.style.marginRight = '8px';
+  const st = fbState(chain);
+  eff.textContent = st === 'unset'
+    ? (key === 'default' || FB_KIND[key] ? t().fbStUnset : t().fbEffUnset)
+    : st === 'empty' ? t().fbEffEmpty : '';
+  const vw = document.createElement('span');
+  vw.className = 'fb-view';
+  vw.textContent = chain ? (chain.length ? chain.join('  →  ') : '[]') : '';
+  view.append(eff, vw);
+  div.appendChild(view);
+
+  const ed = document.createElement('div');
+  ed.className = 'fb-ed'; ed.style.display = 'none';
+  div.appendChild(ed);
+
+  let wmode = st;
+  let wchain = chain ? chain.slice() : [];
+  function renderEd() {
+    ed.innerHTML = '';
+    const msel = document.createElement('select');
+    msel.className = 'fb-mode';
+    msel.setAttribute('aria-label', LANG === 'zh' ? '兜底模式' : 'Fallback mode');
+    for (const [v, lab] of [['unset', t().fbModeUnset],
+                           ['empty', t().fbModeEmpty],
+                           ['custom', t().fbModeCustom]]) fbOpt(msel, v, lab);
+    msel.value = wmode;
+    msel.onchange = () => { wmode = msel.value; renderEd(); };
+    ed.appendChild(msel);
+    if (wmode === 'custom') {
+      wchain.forEach((_, i) => ed.appendChild(fbEntryEditor(wchain, i, renderEd)));
+      const add = document.createElement('button');
+      add.className = 'ghost u-mini'; add.textContent = t().fbAdd;
+      add.disabled = !Object.values(fbProviders()).some(list => list.length);
+      add.onclick = () => {
+        const gs = fbProviders();
+        const p = Object.keys(gs).sort().find(p => gs[p].length);
+        const first = p && gs[p][0];
+        if (!first) return;
+        wchain.push(first.selector);
+        renderEd();
+      };
+      ed.appendChild(add);
+    }
+    const ops = document.createElement('div');
+    ops.className = 'fb-ops';
+    const ok = document.createElement('button'); ok.textContent = t().saveBtn;
+    const no = document.createElement('button'); no.textContent = t().cancelBtn; no.className = 'ghost';
+    ok.onclick = async () => {
+      const payload = wmode === 'unset' ? null : wmode === 'empty' ? [] : wchain.slice();
+      if (wmode === 'custom' && (!wchain.length || wchain.some(s => !s || !s.includes('/')))) {
+        toast(LANG === 'zh' ? '自定义链至少需要一个明确的备用模型；禁用兜底请选择显式禁用。'
+                           : 'Choose at least one fallback model, or explicitly disable fallback.', true);
+        return;
+      }
+      ok.disabled = true;
+      try {
+        const r = await fetch('/api/fallback', {method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({key, chain: payload})}).then(x => x.json());
+        if (r.ok) {
+          fb.data.chains = fb.data.chains || {};
+          if (payload === null) delete fb.data.chains[key]; else fb.data.chains[key] = payload;
+          toast(t().fbSaved(key));
+          renderFallback(document.getElementById('view-roles'));
+        } else toast(t().failed(r.error), true);
+      } catch (e) {
+        toast(t().failed(e.message || e), true);
+      } finally { ok.disabled = false; }
+    };
+    no.onclick = () => { // 取消：回到已保存状态
+      wmode = fbState((fb.data.chains || {})[key]);
+      wchain = ((fb.data.chains || {})[key] || []).slice();
+      ed.style.display = 'none'; ed.innerHTML = '';
+    };
+    ops.append(ok, no);
+    ed.appendChild(ops);
+  }
+  edit.onclick = () => {
+    if (ed.style.display === 'none') {
+      wmode = fbState(chain); wchain = chain ? chain.slice() : [];
+      ed.style.display = ''; renderEd();
+    } else { ed.style.display = 'none'; ed.innerHTML = ''; }
+  };
+  return div;
+}
+
+function renderFallback(box) {
+  const old = box.querySelector('.fb-sec');
+  if (old) old.remove();
+  const sec = document.createElement('div');
+  sec.className = 'fb-sec';
+  const h = document.createElement('div');
+  h.className = 'grp';
+  h.innerHTML = `<span class="grp-name"></span><small>retry.fallbackChains</small>`;
+  h.querySelector('.grp-name').textContent = t().fbTitle;
+  sec.appendChild(h);
+  if (!fb.data) { // 读取失败：显示错误而不是空链
+    const e = document.createElement('div');
+    e.className = 'empty-hint';
+    e.textContent = t().fbLoadFailed + (fb.err ? ': ' + fb.err : '');
+    sec.appendChild(e);
+    box.appendChild(sec);
+    return;
+  }
+  const intro = document.createElement('div');
+  intro.className = 'roles-intro';
+  intro.textContent = t().fbIntro;
+  sec.appendChild(intro);
+  const d = fb.data;
+  sec.appendChild(fbScalarRow(t().fbMF, t().fbMFHint, 'retry.modelFallback',
+    String(d.modelFallback !== false), [['true', t().boolLabel('true')], ['false', t().boolLabel('false')]]));
+  sec.appendChild(fbScalarRow(t().fbOn, '', 'retry.fallbackOn',
+    d.fallbackOn || 'any', [['any', t().fbOnAny], ['usage-limit', t().fbOnLimit],
+                            ['except-usage-limit', t().fbOnExcept]]));
+  sec.appendChild(fbScalarRow(t().fbRev, '', 'retry.fallbackRevertPolicy',
+    d.fallbackRevertPolicy || 'cooldown-expiry',
+    [['cooldown-expiry', t().fbRevCooldown], ['never', t().fbRevNever]]));
+  const chains = d.chains || {};
+  const keys = fb.roles.slice();
+  for (const k of Object.keys(chains)) if (!keys.includes(k)) keys.push(k);
+  for (const k of keys) sec.appendChild(fbChainRow(k));
+  box.appendChild(sec);
+}
+
+/* ---------- Ctrl+P 轮换顺序（cycleOrder） ---------- */
+const cy = { saved: null, draft: null, custom: false, def: [], err: null, roles: {} };
+const CY_ROLE = /^[A-Za-z0-9_][A-Za-z0-9_.\-]*$/;
+const cySame = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+async function loadCycle(roles) {
+  cy.roles = roles;
+  try {
+    const r = await fetch('/api/cycle-order').then(x => x.json());
+    if (r.error) throw new Error(r.error);
+    const keepDraft = cy.saved && cy.draft && !cySame(cy.draft, cy.saved); // 绑定模型后重载时保留未保存草稿
+    cy.saved = r.order; cy.custom = r.custom; cy.def = r.default; cy.err = null;
+    if (!keepDraft) cy.draft = r.order.slice();
+  } catch (e) {
+    cy.err = String(e.message || e); cy.saved = null;
+    toast(t().failed(cy.err), true);
+  }
+}
+
+async function cyPost(order) {
+  try {
+    const r = await fetch('/api/cycle-order', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({order})}).then(x => x.json());
+    if (!r.ok) { toast(t().failed(r.error), true); return false; }
+    cy.saved = r.order; cy.custom = r.custom; cy.draft = r.order.slice();
+    return true;
+  } catch (e) {
+    toast(t().failed(e.message || e), true);
+    return false;
+  }
+}
+
+function cyBindEditor(role, onCancel) { // 为未绑定的（自定义）角色选择模型，写 modelRoles
+  const wrap = document.createElement('div');
+  wrap.className = 'cy-bind';
+  const groups = fbProviders();
+  const psel = document.createElement('select');
+  const msel = document.createElement('select');
+  psel.setAttribute('aria-label', t().cyProvider);
+  msel.setAttribute('aria-label', t().cyModel);
+  for (const p of Object.keys(groups).sort()) if (groups[p].length) fbOpt(psel, p, `${p} (${groups[p].length})`);
+  const fill = () => {
+    msel.innerHTML = '';
+    for (const m of groups[psel.value] || []) fbOpt(msel, m.selector, m.name + '  (' + m.selector + ')');
+  };
+  psel.onchange = fill; fill();
+  const ok = document.createElement('button'); ok.textContent = t().saveBtn;
+  const no = document.createElement('button'); no.textContent = t().cancelBtn; no.className = 'ghost';
+  ok.disabled = !msel.value;
+  ok.onclick = async () => {
+    ok.disabled = true;
+    try {
+      const r = await fetch('/api/set', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({role, value: msel.value})}).then(x => x.json());
+      toast(r.ok ? t().roleSaved(role, msel.value) : t().failed(r.error), !r.ok);
+      if (r.ok) await load(); else ok.disabled = false;
+    } catch (e) {
+      toast(t().failed(e.message || e), true);
+      ok.disabled = false;
+    }
+  };
+  no.onclick = () => { wrap.remove(); onCancel(); };
+  wrap.append(psel, msel, ok, no);
+  return wrap;
+}
+
+function cyEntry(role, i) {
+  const row = document.createElement('div');
+  row.className = 'fb-entry';
+  row.dataset.cycleRole = role;
+  const ord = document.createElement('span');
+  ord.className = 'ord'; ord.textContent = String(i + 1);
+  const name = document.createElement('span');
+  name.className = 'cy-name'; name.textContent = role;
+  row.append(ord, name);
+  const model = cy.roles[role];
+  if (model) {
+    const v = document.createElement('span');
+    v.className = 'fb-view'; v.textContent = model;
+    row.appendChild(v);
+  } else {
+    const w = document.createElement('span');
+    w.className = 'cy-warn'; w.textContent = t().cyUnbound;
+    const bind = document.createElement('button');
+    bind.className = 'ghost u-mini'; bind.textContent = t().cyBind;
+    bind.onclick = () => { bind.disabled = true; row.appendChild(cyBindEditor(role, () => { bind.disabled = false; })); };
+    row.append(w, bind);
+  }
+  const d = cy.draft;
+  const mk = (text, label, disabled, fn) => {
+    const b = document.createElement('button');
+    b.className = 'ghost'; b.textContent = text; b.disabled = disabled;
+    b.setAttribute('aria-label', label); b.title = label;
+    b.onclick = () => { fn(); cyRerender(); };
+    return b;
+  };
+  row.append(
+    mk('↑', t().cyUp, i === 0, () => { [d[i - 1], d[i]] = [d[i], d[i - 1]]; }),
+    mk('↓', t().cyDown, i === d.length - 1, () => { [d[i + 1], d[i]] = [d[i], d[i + 1]]; }),
+    mk('✕', t().cyRemove, false, () => { d.splice(i, 1); }));
+  return row;
+}
+
+function cyRerender() { renderCycle(document.getElementById('view-roles')); }
+
+function renderCycle(box) {
+  const sec = document.createElement('div');
+  sec.className = 'cy-sec';
+  const h = document.createElement('div');
+  h.className = 'grp';
+  h.innerHTML = '<span class="grp-name"></span><small>cycleOrder</small>';
+  h.querySelector('.grp-name').textContent = t().cyTitle;
+  sec.appendChild(h);
+  const old = box.querySelector('.cy-sec');
+  const place = () => {
+    if (old) old.replaceWith(sec);
+    else { const f = box.querySelector('.fb-sec'); f ? box.insertBefore(sec, f) : box.appendChild(sec); }
+  };
+  if (!cy.saved) { // 读取失败：显示错误，不给编辑器
+    const e = document.createElement('div');
+    e.className = 'empty-hint';
+    e.textContent = t().cyLoadFailed + (cy.err ? ': ' + cy.err : '');
+    sec.appendChild(e);
+    place();
+    return;
+  }
+  const intro = document.createElement('div');
+  intro.className = 'roles-intro';
+  intro.textContent = t().cyIntro(cy.def.join(' → '));
+  sec.appendChild(intro);
+
+  const card = document.createElement('div');
+  card.className = 'row';
+  const head = document.createElement('div');
+  head.className = 'head';
+  const title = document.createElement('span');
+  title.className = 'zhname'; title.textContent = t().cyCurrent;
+  const badge = document.createElement('span');
+  badge.className = 'badge ' + (cy.custom ? 'custom' : 'default');
+  badge.textContent = cy.custom ? t().cyStCustom : t().cyStDefault;
+  head.append(title, badge);
+  card.appendChild(head);
+
+  cy.draft.forEach((role, i) => card.appendChild(cyEntry(role, i)));
+  if (!cy.draft.length) {
+    const e = document.createElement('div');
+    e.className = 'desc cy-warn'; e.textContent = t().cyEmpty;
+    card.appendChild(e);
+  }
+
+  const add = document.createElement('div');
+  add.className = 'cy-add';
+  const avail = Object.keys(cy.roles).filter(r => !cy.draft.includes(r));
+  const rsel = document.createElement('select');
+  rsel.setAttribute('aria-label', t().cyAddRole);
+  for (const r of avail) fbOpt(rsel, r, cy.roles[r] ? `${r}  (${cy.roles[r]})` : r);
+  if (!avail.length) fbOpt(rsel, '', t().cyNoRoles);
+  rsel.disabled = !avail.length;
+  const addRole = document.createElement('button');
+  addRole.className = 'ghost u-mini'; addRole.textContent = t().cyAddRole;
+  addRole.disabled = !avail.length;
+  addRole.onclick = () => { cy.draft.push(rsel.value); cyRerender(); };
+  const input = document.createElement('input');
+  input.type = 'text'; input.placeholder = t().cyCustomPh;
+  input.setAttribute('aria-label', t().cyCustomPh);
+  const addCustom = document.createElement('button');
+  addCustom.className = 'ghost u-mini'; addCustom.textContent = t().cyAddCustom;
+  addCustom.onclick = () => {
+    const name = input.value.trim();
+    if (!CY_ROLE.test(name)) { toast(t().cyBadName, true); return; }
+    if (cy.draft.includes(name)) { toast(t().cyDup(name), true); return; }
+    cy.draft.push(name); cyRerender();
+  };
+  input.onkeydown = e => { if (e.key === 'Enter') addCustom.click(); };
+  add.append(rsel, addRole, input, addCustom);
+  card.appendChild(add);
+
+  const dirty = !cySame(cy.draft, cy.saved);
+  const ops = document.createElement('div');
+  ops.className = 'fb-ops';
+  const save = document.createElement('button'); save.textContent = t().saveBtn;
+  save.disabled = !dirty || !cy.draft.length;
+  save.onclick = async () => {
+    save.disabled = true;
+    if (await cyPost(cy.draft.slice())) { toast(t().cySaved); cyRerender(); }
+    else save.disabled = false;
+  };
+  const cancel = document.createElement('button');
+  cancel.className = 'ghost'; cancel.textContent = t().cancelBtn;
+  cancel.disabled = !dirty;
+  cancel.onclick = () => { cy.draft = cy.saved.slice(); cyRerender(); };
+  const reset = document.createElement('button');
+  reset.className = 'ghost'; reset.textContent = t().cyReset;
+  reset.disabled = !cy.custom;
+  reset.onclick = async () => {
+    if (!confirm(t().cyResetConfirm(cy.def.join(' → ')))) return;
+    reset.disabled = true;
+    if (await cyPost(null)) { toast(t().cyResetDone); cyRerender(); }
+    else reset.disabled = false;
+  };
+  const note = document.createElement('span');
+  note.className = 'cy-dirty'; note.textContent = dirty ? t().cyDirty : '';
+  ops.append(save, cancel, reset, note);
+  card.appendChild(ops);
+  sec.appendChild(card);
+  place();
 }
 
 /* ---------- 全部设置 ---------- */

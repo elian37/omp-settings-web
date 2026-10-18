@@ -12,6 +12,7 @@
 """
 import fnmatch
 import json
+import threading
 import re
 import shutil
 import subprocess
@@ -32,6 +33,9 @@ PORT = 8788
 EDITABLE_TYPES = {"string", "boolean", "number", "integer", "enum"}
 # pythonw 下无控制台，omp.exe 子进程会各自弹出新窗口；Windows 上一律隐藏
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+# ThreadingHTTPServer 下并发 POST 会同时改写 config.yml；统一串行化所有写入
+_config_lock = threading.Lock()
 
 ROLE_COMMENT = {
     "default": "主会话模型",
@@ -128,6 +132,11 @@ def write_backup():
 
 
 def set_config_key(key, formatted):
+    with _config_lock:
+        return _set_config_key(key, formatted)
+
+
+def _set_config_key(key, formatted):
     raw = CONFIG.read_bytes().decode('utf-8')
     eol = '\r\n' if '\r\n' in raw else '\n'
     lines = raw.splitlines(keepends=True)
@@ -269,6 +278,11 @@ def visibility_state():
 
 
 def set_visible(selected):
+    with _config_lock:
+        return _set_visible(selected)
+
+
+def _set_visible(selected):
     if not isinstance(selected, list) or not all(isinstance(s, str) for s in selected):
         return "参数格式错误"
     models = list_models()
@@ -310,6 +324,577 @@ def set_visible(selected):
     write_backup()
     CONFIG.write_bytes(''.join(lines).encode('utf-8'))
     return None
+
+# ---------- 回退链（retry.fallbackChains 等） ----------
+# 只托管 retry 顶层块/单行 flow map；fallbackChains 仅接受
+# 块 map、inline [] 数组或显式 null，其余结构一律拒绝改写。
+
+_MODEL_PATH = r'[A-Za-z0-9_.\-]+/(?:[A-Za-z0-9_.\-]+/)*[A-Za-z0-9_.*\-]+'
+_THINKING = r'(?::(?:off|minimal|low|medium|high|xhigh|max|auto|inherit))?'
+CHAIN_KEY = re.compile(r'(?:[A-Za-z0-9_.\-]+|' + _MODEL_PATH + r')' + _THINKING)
+CHAIN_SELECTOR = re.compile(_MODEL_PATH + _THINKING)
+FALLBACK_DEFAULTS = {"modelFallback": True, "fallbackOn": "any",
+                     "fallbackRevertPolicy": "cooldown-expiry"}
+FALLBACK_SCALARS = ("modelFallback", "fallbackOn", "fallbackRevertPolicy")
+
+
+def _unquote(s):
+    s = s.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in '"\'':
+        if s[0] == '"':
+            try:
+                return json.loads(s)
+            except json.JSONDecodeError:
+                return s[1:-1]
+        return s[1:-1]
+    return s
+
+
+def _yaml_text(s):
+    s, _ = split_comment(s)
+    return _unquote(s)
+
+
+def _split_flow(s):
+    """按顶层逗号切 flow 内容，跳过引号与 []/{} 嵌套；不配对返回 None。"""
+    parts, depth, inq, cur = [], 0, None, ''
+    for ch in s:
+        if inq:
+            cur += ch
+            if ch == inq:
+                inq = None
+            continue
+        if ch in '"\'':
+            inq = ch
+        elif ch in '[{':
+            depth += 1
+        elif ch in ']}':
+            depth -= 1
+        elif ch == ',' and depth == 0:
+            parts.append(cur)
+            cur = ''
+            continue
+        cur += ch
+    if inq or depth != 0:
+        return None
+    parts.append(cur)
+    return [p for p in parts if p.strip()]
+
+
+def _split_flow_pair(p):
+    """在顶层找第一个冒号切 key:value；非合法 flow 对返回 None。"""
+    depth, inq = 0, None
+    for i, ch in enumerate(p):
+        if inq:
+            if ch == inq:
+                inq = None
+        elif ch in '"\'':
+            inq = ch
+        elif ch in '[{':
+            depth += 1
+        elif ch in ']}':
+            depth -= 1
+        elif ch == ':' and depth == 0:
+            return p[:i], p[i + 1:]
+    return None
+
+
+def _parse_flow_seq(s):
+    """解析 '[a, b]'；返回 (items 或 None, ok)。ok=False 表示根本不是 '[' 开头。"""
+    s = s.strip()
+    if not s.startswith('['):
+        return None, False
+    if not s.endswith(']'):
+        return None, False
+    parts = _split_flow(s[1:-1])
+    if parts is None:
+        return None, True
+    return [_yaml_text(p) for p in parts], True
+
+
+def _parse_flow_map(s):
+    """解析 '{k: v, ...}' 单级 flow map；返回 (dict 或 None, ok)。"""
+    s = s.strip()
+    if not s.startswith('{') or not s.endswith('}'):
+        return None, False
+    parts = _split_flow(s[1:-1])
+    if parts is None:
+        return None, True
+    out = {}
+    for p in parts:
+        pair = _split_flow_pair(p)
+        if pair is None:
+            return None, True
+        k, v = pair
+        out[_unquote(k)] = v.strip()
+    return out, True
+
+
+def _flow_chains(vclean):
+    """把 inline 值（flow map 或 null/[] 空形式）解析成 {key: chain}；
+    非 map、成员非序列、或结构非法返回 None。"""
+    if not vclean or vclean in ('null', '~', '{}', '[]'):
+        return {}
+    sub, ok = _parse_flow_map(vclean)
+    if not ok or sub is None:
+        return None
+    out = {}
+    for ck, cv in sub.items():
+        arr, ok = _parse_flow_seq(cv)
+        if not ok or arr is None:
+            return None
+        out[ck] = arr or []
+    return out
+
+
+def _fc_children(lines, head_line, head_indent):
+    """扫描块 map 形态的 fallbackChains 子键。
+    返回 (end, {key: {'chain': [...], 'seq': 是否块序列, 'ks', 'ke'}})；
+    结构不支持返回 (head_line, None)。ke 为包块序列子项的排他结束行。"""
+    entries, j = {}, head_line + 1
+    while j < len(lines):
+        ln = lines[j]
+        if not ln.strip() or ln.lstrip().startswith('#'):
+            j += 1
+            continue
+        lead = len(ln) - len(ln.lstrip(' '))
+        if lead <= head_indent:
+            break
+        km = KEY_LINE.match(ln)
+        if km is None:
+            return head_line, None
+        kname = _unquote(km.group(2).strip())
+        kval, _ = split_comment(km.group(3) or '')
+        kval = kval.strip()
+        ks, ke = j, j + 1
+        if not kval:
+            # 空值 → 后跟更深缩进的 - 块序列；否则视同空链 []
+            chain, seq, j2 = [], False, j + 1
+            while j2 < len(lines):
+                ln2 = lines[j2]
+                if not ln2.strip():
+                    j2 += 1
+                    continue
+                if ln2.lstrip().startswith('#'):
+                    j2 += 1
+                    continue
+                if (len(ln2) - len(ln2.lstrip(' '))) <= lead:
+                    break
+                im = LIST_ITEM.match(ln2)
+                if im is None:
+                    return head_line, None   # 键下嵌套 map/标量，不托管
+                seq = True
+                v = _yaml_text(im.group(1))
+                if v.startswith(('{', '[')):
+                    return head_line, None
+                chain.append(v)
+                j2 += 1
+            # Leave comments between this chain and the next key outside its range.
+            ke = j2
+            while ke > ks + 1 and (not lines[ke - 1].strip() or
+                                   lines[ke - 1].lstrip().startswith('#')):
+                ke -= 1
+            entries[kname] = {'chain': chain, 'seq': seq, 'ks': ks, 'ke': ke}
+            j = ke
+            continue
+        arr, ok = _parse_flow_seq(kval)
+        if not ok or arr is None:
+            return head_line, None  # 多行标量/嵌套/引用等，不托管
+        entries[kname] = {'chain': arr or [], 'seq': False, 'ks': ks, 'ke': ke}
+        j += 1
+    return j, entries
+
+
+def _retry_region(idx, lines):
+    """返回 (retry 行, retry 缩进, retry 块结束行)；retry 非块返回 None。"""
+    info = idx.get('retry')
+    if info is None:
+        return None
+    m = KEY_LINE.match(lines[info['line']])
+    value, _ = split_comment(m.group(3) or '')
+    if value.strip():
+        return None
+    indent = len(lines[info['line']]) - len(lines[info['line']].lstrip(' '))
+    j = info['line'] + 1
+    while j < len(lines):
+        ln = lines[j]
+        if ln.strip() and not ln.lstrip().startswith('#') and \
+           (len(ln) - len(ln.lstrip(' '))) <= indent:
+            break
+        j += 1
+    return info['line'], indent, j
+
+
+def _retry_flow_parse(m):
+    """解析 retry 行上的 flow map 值，返回 (fmap, chains, scalars) 或 None。
+    fmap 为 {key: 原值文本}；chains 是 fallbackChains 的 {key: chain}。"""
+    raw, _ = split_comment(m.group(3) or '')
+    fmap, ok = _parse_flow_map(raw)
+    if not ok or fmap is None:
+        return None
+    chains, scalars = {}, {}
+    for k, v in fmap.items():
+        if k == 'fallbackChains':
+            c = _flow_chains(v)
+            if c is None:
+                return None
+            chains = c
+        elif k in FALLBACK_SCALARS:
+            scalars[k] = _yaml_text(v)
+    return fmap, chains, scalars
+
+
+def _scalar_bool(v):
+    return str(v).strip().lower() in ('true', 'yes', 'on', '1')
+
+
+def _scalar_choice(v, options, default):
+    v = str(v).strip()
+    return v if v in options else default
+
+
+def fallback_state():
+    """读 retry.fallbackChains 与相关标量；不支持的 YAML 返回 {"error": ...}。"""
+    try:
+        raw = CONFIG.read_bytes().decode('utf-8')
+    except OSError as e:
+        return {"error": f"无法读取 {CONFIG}: {e}"}
+    lines = raw.splitlines(keepends=True)
+    idx = index_config(lines)
+    chains, scalars = {}, {}
+    info = idx.get('retry')
+    if info:
+        m = KEY_LINE.match(lines[info['line']])
+        vclean, _ = split_comment(m.group(3) or '') if m else ('', '')
+        vclean = vclean.strip()
+        if vclean:
+            # retry: {…} 单行 flow map / JSON inline map
+            r = _retry_flow_parse(m)
+            if r is None:
+                return {"error": "config.yml 的 retry 含不支持的 YAML 结构，"
+                                "请手工编辑"}
+            _, chains, scalars = r
+        else:
+            reg = _retry_region(idx, lines)
+            if reg is None:
+                return {"error": "无法定位 retry 块"}
+            _, _, rend = reg
+            fc = idx.get('retry.fallbackChains')
+            if fc and fc['line'] < rend:
+                fm = KEY_LINE.match(lines[fc['line']])
+                fval, _ = split_comment(fm.group(3) or '') if fm else ('', '')
+                fval = fval.strip()
+                if not fval:
+                    fci = len(lines[fc['line']]) - \
+                        len(lines[fc['line']].lstrip(' '))
+                    _, entries = _fc_children(lines, fc['line'], fci)
+                    if entries is None:
+                        return {"error": "config.yml 的 fallbackChains 含不支持的"
+                                        " YAML 结构，请手工编辑"}
+                    chains = {k: e['chain'] for k, e in entries.items()}
+                else:
+                    c = _flow_chains(fval)
+                    if c is None:
+                        return {"error": "config.yml 的 fallbackChains 含不支持"
+                                        "的 YAML 结构，请手工编辑"}
+                    chains = c
+            for s in FALLBACK_SCALARS:
+                si = idx.get(f'retry.{s}')
+                if si and si['kind'] == 'scalar' and si['line'] < rend:
+                    sm = KEY_LINE.match(lines[si['line']])
+                    if sm:
+                        scalars[s] = _yaml_text(sm.group(3) or '')
+    return {"chains": chains,
+            "modelFallback": _scalar_bool(
+                scalars.get("modelFallback", FALLBACK_DEFAULTS["modelFallback"])),
+            "fallbackOn": _scalar_choice(
+                scalars.get("fallbackOn"),
+                ("any", "usage-limit", "except-usage-limit"),
+                FALLBACK_DEFAULTS["fallbackOn"]),
+            "fallbackRevertPolicy": _scalar_choice(
+                scalars.get("fallbackRevertPolicy"),
+                ("cooldown-expiry", "never"),
+                FALLBACK_DEFAULTS["fallbackRevertPolicy"])}
+
+
+def set_fallback_chain(key, chain):
+    with _config_lock:
+        return _set_fallback_chain(key, chain)
+
+
+def _set_fallback_chain(key, chain):
+    """写入/删除 retry.fallbackChains 下的一个键。
+    chain=None 删除该键（表示未配置），[] 显式禁用。只改这一个键。"""
+    key = (key or '').strip() if isinstance(key, str) else ''
+    if not CHAIN_KEY.fullmatch(key):
+        return "非法链键名（允许 provider/model-id、provider/* 或角色名）"
+    if chain is not None:
+        if not isinstance(chain, list) or \
+           not all(isinstance(s, str) for s in chain):
+            return "chain 必须是 selector 数组、null 或 []"
+        for s in chain:
+            if not CHAIN_SELECTOR.fullmatch(s.strip()):
+                return (f"非法 selector: {s!r}（须为 provider/model-id，"
+                        f"可带 thinking 后缀）")
+    try:
+        raw = CONFIG.read_bytes().decode('utf-8')
+    except OSError as e:
+        return f"无法读取 {CONFIG}: {e}"
+    eol = '\r\n' if '\r\n' in raw else '\n'
+    lines = raw.splitlines(keepends=True)
+    body = None
+    if chain is not None:
+        items = ', '.join(yaml_scalar(s.strip()) for s in chain)
+        body = f"{key}: [{items}]{eol}"  # 不带缩进的键行，插入时加 findent
+
+    idx = index_config(lines)
+    info = idx.get('retry')
+
+    if info is None:
+        if chain is None:
+            return None  # 未配置：无需写入
+        if lines and not lines[-1].endswith('\n'):
+            lines[-1] += eol
+        lines.extend([f"retry:{eol}", f"  fallbackChains:{eol}",
+                      f"    {body}"])
+        write_backup()
+        CONFIG.write_bytes(''.join(lines).encode('utf-8'))
+        return None
+
+    m = KEY_LINE.match(lines[info['line']])
+    rval, _ = split_comment(m.group(3) or '') if m else ('', '')
+    rval = rval.strip()
+
+    if rval:
+        # retry 是单行值：flow map 可整体改写为块；非 {} 的裸标量拒绝
+        if rval and not rval.startswith('{'):
+            return "config.yml 的 retry 含不支持的 YAML 结构，请手工编辑"
+        r = _retry_flow_parse(m)
+        if r is None:
+            return "config.yml 的 retry flow map 含不支持的结构，请手工编辑"
+        fmap, chains, _scalars = r
+        if chain is None:
+            if key not in chains:
+                return None
+            del chains[key]
+        else:
+            chains[key] = [s.strip() for s in chain]
+        indent0 = m.group(1)
+        sub = ' ' * (len(indent0) + 2)
+        _, comment = split_comment(m.group(3) or '')
+        note = ' ' + comment if comment else ''
+        new = [f"{indent0}retry:{note}{eol}"]
+        if 'fallbackChains' not in fmap and chains:
+            fmap['fallbackChains'] = '{}'
+        for k, v in fmap.items():
+            if k == 'fallbackChains':
+                if chains:
+                    new.append(f"{sub}fallbackChains:{eol}")
+                    new.extend(
+                        f"{sub}  {ck}: [{', '.join(yaml_scalar(s) for s in cv)}]"
+                        f"{eol}" for ck, cv in chains.items())
+            else:
+                new.append(f"{sub}{k}: {v}{eol}")
+        lines[info['line']:info['line'] + 1] = new
+        write_backup()
+        CONFIG.write_bytes(''.join(lines).encode('utf-8'))
+        return None
+
+    reg = _retry_region(idx, lines)
+    if reg is None:
+        return "无法定位 retry 块"
+    rline, rindent, rend = reg
+    cindent = ' ' * (rindent + 2)   # retry 直接子键缩进
+    findent = ' ' * (rindent + 4)   # fallbackChains 子键缩进
+    fc = idx.get('retry.fallbackChains')
+    if fc and fc['line'] >= rend:
+        fc = None
+
+    fc_kind = None   # None | 'block' | 'inline' | 'refuse'
+    fc_entries = None
+    fc_inline = None
+    if fc:
+        fm = KEY_LINE.match(lines[fc['line']])
+        fval, fcmt = split_comment(fm.group(3) or '') if fm else ('', '')
+        fval = fval.strip()
+        fcmt = (' ' + fcmt) if fcmt else ''
+        if not fval:
+            fci = len(lines[fc['line']]) - len(lines[fc['line']].lstrip(' '))
+            _, fc_entries = _fc_children(lines, fc['line'], fci)
+            fc_kind = 'refuse' if fc_entries is None else 'block'
+        else:
+            c = _flow_chains(fval)
+            fc_kind = 'refuse' if c is None else 'inline'
+            fc_inline = c
+        if fc_kind == 'refuse':
+            return ("config.yml 的 fallbackChains 含不支持的 YAML 结构"
+                    "（嵌套/混排/非标量值），请手工编辑")
+
+    ent = (fc_entries or {}).get(key) if fc_kind == 'block' else None
+
+    if chain is None:
+        if fc_kind == 'block':
+            if ent is None:
+                return None
+            preserved = [line for line in lines[ent['ks']:ent['ke']]
+                         if line.lstrip().startswith('#')]
+            lines[ent['ks']:ent['ke']] = preserved
+            # 删空了整个 map → 连 fallbackChains 头一起去掉
+            if not any(k != key for k in fc_entries):
+                del lines[fc['line']]
+        elif fc_kind == 'inline':
+            if key not in fc_inline:
+                return None
+            del fc_inline[key]
+            fm = KEY_LINE.match(lines[fc['line']])
+            if fc_inline:
+                inner = ', '.join(
+                    f"{yaml_scalar(ck)}: "
+                    f"[{', '.join(yaml_scalar(s) for s in cv)}]"
+                    for ck, cv in fc_inline.items())
+                lines[fc['line']] = \
+                    f"{fm.group(1)}fallbackChains: {{{inner}}}{fcmt}{eol}"
+            else:
+                del lines[fc['line']]
+        else:
+            return None  # 没有该键，也没有 fallbackChains
+        write_backup()
+        CONFIG.write_bytes(''.join(lines).encode('utf-8'))
+        return None
+
+    if ent is not None:
+        old = KEY_LINE.match(lines[ent['ks']])
+        _, comment = split_comment(old.group(3) or '')
+        note = ' ' + comment if comment else ''
+        replacement = f"{old.group(1)}{key}: [{items}]{note}{eol}"
+        preserved = [line for line in lines[ent['ks'] + 1:ent['ke']]
+                     if line.lstrip().startswith('#')]
+        lines[ent['ks']:ent['ke']] = [replacement, *preserved]
+    elif fc_kind == 'block' and fc is not None:
+        pos = fc['line'] + 1
+        for e in fc_entries.values():
+            pos = max(pos, e['ke'])
+        lines[pos:pos] = [f"{findent}{body}"]
+    elif fc_kind == 'inline' and fc is not None:
+        fc_inline[key] = [s.strip() for s in chain]
+        fm = KEY_LINE.match(lines[fc['line']])
+        inner = ', '.join(
+            f"{yaml_scalar(ck)}: [{', '.join(yaml_scalar(s) for s in cv)}]"
+            for ck, cv in fc_inline.items())
+        lines[fc['line']] = \
+            f"{fm.group(1)}fallbackChains: {{{inner}}}{fcmt}{eol}"
+    elif fc is not None:
+        # 不应到达（refuse 已提前返回）
+        return "config.yml 的 fallbackChains 结构不可写"
+    else:
+        lines[rline + 1:rline + 1] = [f"{cindent}fallbackChains:{eol}",
+                                      f"{findent}{body}"]
+    write_backup()
+    CONFIG.write_bytes(''.join(lines).encode('utf-8'))
+    return None
+
+# ---------- Ctrl+P 轮换顺序（cycleOrder） ----------
+
+CYCLE_DEFAULT = ["smol", "default", "slow"]
+CYCLE_HEAD = re.compile(r'^cycleOrder:(?:[ \t]+([^\r\n]*?))?[ \t]*(\r?\n)?$')
+CYCLE_ROLE = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.\-]*')
+
+
+def _cycle_block(lines):
+    """定位顶层 cycleOrder：返回 (首行, 尾后行, 条目, 首行注释, 列表内注释行)；
+    不存在返回 None；结构不支持时条目为 None。"""
+    for i, line in enumerate(lines):
+        m = CYCLE_HEAD.match(line)
+        if not m:
+            continue
+        value, comment = split_comment(m.group(1) or '')
+        value = value.strip()
+        if value:
+            arr, ok = _parse_flow_seq(value)
+            if not ok or arr is None or any(':' in v for v in arr):
+                return i, i + 1, None, comment, []
+            return i, i + 1, arr, comment, []
+        entries, notes, end, j = [], [], i + 1, i + 1
+        while j < len(lines):
+            ln = lines[j]
+            if not ln.strip() or ln.lstrip().startswith('#'):
+                j += 1
+                continue
+            if not ln[0].isspace():
+                break
+            item = LIST_ITEM.match(ln)
+            raw, _ = split_comment(item.group(1)) if item else ('', '')
+            if item is None or raw.startswith(('{', '[')) or \
+               (':' in raw and raw[:1] not in '"\''):
+                return i, i + 1, None, comment, []
+            notes.extend(x for x in lines[end:j] if x.lstrip().startswith('#'))
+            entries.append(_unquote(raw))
+            j += 1
+            end = j
+        return i, end, entries, comment, notes
+    return None
+
+
+def cycle_order_state():
+    """读 cycleOrder；未配置时返回 omp 默认顺序。"""
+    try:
+        lines = CONFIG.read_bytes().decode('utf-8').splitlines(keepends=True)
+    except OSError as e:
+        return {"error": f"无法读取 {CONFIG}: {e}"}
+    blk = _cycle_block(lines)
+    if blk and blk[2] is None:
+        return {"error": "config.yml 的 cycleOrder 含不支持的 YAML 结构，请手工编辑"}
+    if not blk:
+        return {"order": list(CYCLE_DEFAULT), "custom": False,
+                "default": list(CYCLE_DEFAULT)}
+    head = CYCLE_HEAD.match(lines[blk[0]])
+    inline = bool(head and split_comment(head.group(1) or '')[0].strip())
+    custom = inline or bool(blk[2])  # 仅写 `cycleOrder:` 且无条目 = YAML null，按默认
+    order = list(blk[2] or []) if custom else list(CYCLE_DEFAULT)
+    return {"order": order, "custom": custom, "default": list(CYCLE_DEFAULT)}
+
+
+def set_cycle_order(order):
+    with _config_lock:
+        return _set_cycle_order(order)
+
+
+def _set_cycle_order(order):
+    """order=None 删除 cycleOrder（恢复 omp 默认）；否则写入有序角色名列表。"""
+    if order is not None:
+        if not isinstance(order, list) or not order:
+            return "轮换列表至少需要一个角色；恢复默认请使用恢复默认"
+        if not all(isinstance(r, str) and CYCLE_ROLE.fullmatch(r) for r in order):
+            return "角色名只能包含字母、数字、下划线、点和连字符，不能带 @"
+        if len(set(order)) != len(order):
+            return "轮换列表中的角色不能重复"
+    try:
+        raw = CONFIG.read_bytes().decode('utf-8')
+    except OSError as e:
+        return f"无法读取 {CONFIG}: {e}"
+    eol = '\r\n' if '\r\n' in raw else '\n'
+    lines = raw.splitlines(keepends=True)
+    blk = _cycle_block(lines)
+    if blk and blk[2] is None:
+        return "config.yml 的 cycleOrder 含不支持的 YAML 结构，请手工编辑"
+    if order is None:
+        if not blk:
+            return None
+        del lines[blk[0]:blk[1]]
+    else:
+        note = ' ' + blk[3] if blk and blk[3] else ''
+        block = [f"cycleOrder:{note}{eol}"] + \
+            [f"  - {yaml_scalar(r)}{eol}" for r in order]
+        if blk:
+            lines[blk[0]:blk[1]] = block + blk[4]
+        else:
+            if lines and not lines[-1].endswith('\n'):
+                lines[-1] += eol
+            lines.extend(block)
+    write_backup()
+    CONFIG.write_bytes(''.join(lines).encode('utf-8'))
+    return None
+
 
 
 def list_settings():
@@ -720,6 +1305,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(visibility_state(), ensure_ascii=False))
         elif path == "/api/usage":
             self._send(200, json.dumps(usage_with_resettable(), ensure_ascii=False))
+        elif path == "/api/fallback":
+            self._send(200, json.dumps(fallback_state(), ensure_ascii=False))
+        elif path == "/api/cycle-order":
+            self._send(200, json.dumps(cycle_order_state(), ensure_ascii=False))
         else:
             self._send(404, "{}")
 
@@ -750,6 +1339,21 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send(200, json.dumps({"ok": True, **visibility_state()},
                                            ensure_ascii=False))
+        elif self.path == "/api/fallback":
+            err = set_fallback_chain(payload.get("key", ""),
+                                     payload.get("chain", None))
+            if err:
+                self._send(400, json.dumps({"error": err}, ensure_ascii=False))
+            else:
+                self._send(200, json.dumps(
+                    {"ok": True, **fallback_state()}, ensure_ascii=False))
+        elif self.path == "/api/cycle-order":
+            err = set_cycle_order(payload.get("order", None))
+            if err:
+                self._send(400, json.dumps({"error": err}, ensure_ascii=False))
+            else:
+                self._send(200, json.dumps(
+                    {"ok": True, **cycle_order_state()}, ensure_ascii=False))
         elif self.path == "/api/usage/invalidate":
             self._send(200, json.dumps(
                 invalidate_usage(payload.get("provider")), ensure_ascii=False))
@@ -778,6 +1382,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def set_role(role, value):
+    with _config_lock:
+        return _set_role(role, value)
+
+
+def _set_role(role, value):
     role, value = role.strip(), value.strip()
     if not re.fullmatch(r"[A-Za-z0-9_@:,\.\-\/\*]+", role) or \
        not re.fullmatch(r"[A-Za-z0-9_@:,\.\-\/\*\?\[\]]+", value):

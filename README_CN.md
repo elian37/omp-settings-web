@@ -30,12 +30,16 @@
 
 - 两级选择（供应商分组→组内模型），自动定位当前值，别名兜底。
 - 每个角色下方显示详细新手向说明（该角色被哪些功能用、配什么模型、未配置时的回退行为），页顶有角色机制通用说明（@别名、*、逗号候选、自定义角色）。
+- 窄窗口（≤700px）角色卡片自动分行：名称与切换按钮置顶，模型值、说明及编辑下拉框使用整行宽度，避免说明被横向挤成细长列。
+- Ctrl+P 轮换顺序编辑器（`cycleOrder`）：上移、下移、移出，加入已有角色或输入自定义角色名；未绑定模型的角色可直接选择模型并写入 `modelRoles`。保存/取消/恢复默认，恢复默认会删除 `cycleOrder`，回到 omp 默认 `smol → default → slow`。拒绝空列表、重复名、`@别名`和非法字符。
+- 故障兜底编辑器：按角色或现有模型/供应商链配置有序备用模型，支持添加、删除、上移、下移和取消。区分「未配置」（删除键，沿用 omp 默认规则）、「显式禁用」（`[]`）和「自定义链」。供应商选项只来自当前可见模型目录；已有隐藏或离线模型仅在所属条目中作为「当前值」保留，不产生空供应商分组。新增条目使用明确的 `provider/model-id`，不使用 `@角色`。
+- 可编辑自动模型回退 `retry.modelFallback`、触发条件 `retry.fallbackOn` 和恢复策略 `retry.fallbackRevertPolicy`。具体模型键优先于供应商通配符，再到当前角色和 `default`；非聊天模型种类角色使用自己的链，不继承聊天 `default`。规则说明与页顶角色说明统一使用紧凑卡片排版。
 
 **全部设置**
 
 - 全量设置目录，含当前值/类型/描述。
 - 全部 529 项均有面向初学者的详细中文说明（每个取值的效果、默认值、何时值得改、相关设置），上游英文原文悬停可见。
-- 标量项可直接改，数组/嵌套块只读展示。
+- 标量项可直接改，数组/嵌套块在本页只读展示；`retry.fallbackChains` 在「模型角色」页使用专用编辑器。
 - 设置页按 ~35 个语义大类做侧栏导航（按项数排序），搜索时侧栏显示各组命中数、零命中置灰。
 - 搜索 + 只看已自定义；徽章区分自定义项与默认值。
 
@@ -80,7 +84,7 @@ pythonw widget.py           # 无控制台窗口；右键小窗调出菜单
 1. **精准行编辑**——读取 `~/.omp/agent/config.yml`，只正则替换目标键的那一行；尚未存在的键按正确嵌套层级插入。
 2. **字节级 IO**——`read_bytes`/`write_bytes` 并检测原文件行尾（LF vs CRLF），除被编辑/插入的行外其他内容逐字节不变。
 3. **自动备份**——每次写入前先把配置复制为 `config.yml.bak-settings-web-<时间戳>`。
-4. **类型校验**——按 `omp config list` 上报的类型做值转换（boolean/number/string/enum）；数组和嵌套块只读。
+4. **类型校验**——按 `omp config list` 上报的类型做值转换（boolean/number/string/enum）；兜底链专用接口校验键名和模型选择器，支持块映射/列表及单行映射，不支持的复杂 YAML 拒绝写入。
 
 服务只绑定 `127.0.0.1`。所有写入前的值/角色输入都先过白名单正则。
 
@@ -94,6 +98,10 @@ pythonw widget.py           # 无控制台窗口；右键小窗调出菜单
 | `/api/set` | POST | `{"role": "...", "value": "..."}` — 备份 + 精准写入 |
 | `/api/settings` | GET | 全量设置目录（`omp config list --json`）+ 中文注释 + `__groupmap` |
 | `/api/set-key` | POST | `{"key": "...", "value": "..."}` — 类型化标量写入，备份 + 精准行编辑 |
+| `/api/fallback` | GET | 读取兜底链及 `modelFallback` / `fallbackOn` / `fallbackRevertPolicy` |
+| `/api/fallback` | POST | `{"key":"default","chain":["provider/model"]}`；`chain: []` 禁用，`chain: null` 删除配置，仅修改该链并自动备份 |
+| `/api/cycle-order` | GET | Ctrl+P 轮换顺序 `{order, custom, default}`；未配置时返回 omp 默认顺序 |
+| `/api/cycle-order` | POST | `{"order":["smol","default","e"]}` 写入；`{"order": null}` 删除配置恢复默认；自动备份 |
 | `/api/usage` | GET | `omp usage --json` 透传 — 按供应商的额度/用量报告 |
 | `/api/usage/invalidate` | POST | `{"provider": "all"|<provider id>}` — 白名单校验的 `omp usage invalidate`，强制重抓 |
 | `/api/usage/redeem` | POST | `{"provider": "anthropic"\|"openai-codex"}` — 消耗一张额度券（anthropic 两步 request_id 确认、openai-codex 单步幂等），结构化 `{ok, code, error}` 响应，token 永不外泄 |
