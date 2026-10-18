@@ -32,6 +32,7 @@
 - Each role shows a beginner-friendly explanation below it (which features use the role, what model to assign, and the fallback behavior when unset); a general note at the top explains the role mechanism (@aliases, *, comma candidates, custom roles).
 - Ctrl+P cycle order editor (`cycleOrder`): move up/down, remove, add existing roles or a custom role name; roles without a model can be bound to one right there (written to `modelRoles`). Save / cancel / restore default — restoring removes `cycleOrder` so omp falls back to `smol → default → slow`. Empty lists, duplicates, `@aliases` and invalid characters are rejected.
 - Failure fallback editor: ordered backup models for roles and existing model/provider chains, with add, remove, move up/down and cancel. Distinguishes unset (remove the key and use omp's normal rules), explicitly disabled (`[]`), and a custom chain. Existing hidden/offline entries are retained; new entries use explicit `provider/model-id` selectors, not `@role` aliases.
+- Fallback entries and concrete model keys support model version tags (for example, `ollama-cloud/deepseek-v4.1-flash:1017`) and a thinking suffix after the tag (`:1017:high`); version tags are not rejected as invalid thinking levels.
 - Controls for `retry.modelFallback`, `retry.fallbackOn` and `retry.fallbackRevertPolicy`. Exact model keys take precedence over provider wildcards, then the active role and `default`; model-kind roles use their own chains rather than the chat `default`.
 
 **All settings**

@@ -329,7 +329,7 @@ def _set_visible(selected):
 # 只托管 retry 顶层块/单行 flow map；fallbackChains 仅接受
 # 块 map、inline [] 数组或显式 null，其余结构一律拒绝改写。
 
-_MODEL_PATH = r'[A-Za-z0-9_.\-]+/(?:[A-Za-z0-9_.\-]+/)*[A-Za-z0-9_.*\-]+'
+_MODEL_PATH = r'[A-Za-z0-9_.\-]+/(?:[A-Za-z0-9_.\-]+/)*[A-Za-z0-9_.*\-]+(?::[A-Za-z0-9_.*\-]+)?'
 _THINKING = r'(?::(?:off|minimal|low|medium|high|xhigh|max|auto|inherit))?'
 CHAIN_KEY = re.compile(r'(?:[A-Za-z0-9_.\-]+|' + _MODEL_PATH + r')' + _THINKING)
 CHAIN_SELECTOR = re.compile(_MODEL_PATH + _THINKING)

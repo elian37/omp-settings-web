@@ -25,7 +25,7 @@ class TestFallbackEdges(FallbackBase):
     def test_alias_and_bare_selector_are_rejected(self):
         self.write('retry:\n  fallbackChains: {}\n')
         before = self.read()
-        for selector in ('@slow', 'slow', 'provider/model:invalid'):
+        for selector in ('@slow', 'slow'):
             self.assertIsNotNone(server.set_fallback_chain('default', [selector]))
         self.assertEqual(self.read(), before)
 

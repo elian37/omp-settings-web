@@ -224,6 +224,17 @@ class TestWrite(FallbackBase):
         self.assertIsNotNone(server.set_fallback_chain("k", [1, 2]))
         self.assertEqual(self.read(), before)
 
+    def test_tagged_model_selectors_round_trip(self):
+        self.write("retry:\n  fallbackChains:\n    default: [a/m]\n")
+        model = "ollama-cloud/deepseek-v4.1-flash:1017"
+        for key in ("task", model):
+            chain = [model, model + ":high",
+                     "google-antigravity/gemini-3.8-flash"]
+            with self.subTest(key=key):
+                self.assertIsNone(server.set_fallback_chain(key, chain))
+                self.assertEqual(server.fallback_state()["chains"][key], chain)
+        self.assertEqual(server.fallback_state()["chains"]["default"], ["a/m"])
+
     def test_selector_allowlist(self):
         self.write("retry:\n  fallbackChains:\n    a: [x/y]\n")
         for ok in ("anthropic/claude-sonnet-4.5",
