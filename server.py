@@ -992,6 +992,376 @@ def usage_with_resettable():
     return r
 
 
+# ---------- 多账号：账号列表 + auth.accountPolicies ----------
+# 账号身份来自 `omp usage accounts --json`（无 token），额度来自 `omp usage --json`；
+# 从不读取 agent.db 的凭据字段。策略只托管 auth.accountPolicies 的已知块结构：
+#   accountPolicies:
+#     - provider: <id>
+#       account:
+#         email|accountId|projectId|orgId: <值>
+#       priority: <整数>
+#       reservePct: <0-100>
+# 出现注释、flow 写法或未知键时只读，不改写。
+
+POLICY_PROVIDER = re.compile(r'[a-z0-9][a-z0-9_\-]{0,63}')
+SELECTOR_VALUE = re.compile(r'[A-Za-z0-9_@.+:\-]{1,200}')
+SELECTOR_KEYS = ("email", "accountId", "projectId", "orgId")
+POLICY_SCALARS = ("priority", "reservePct")
+_ITEM_LINE = re.compile(r'^([ \t]*)-[ \t]+([A-Za-z]+):[ \t]*([^\r\n]*?)[ \t]*(\r?\n)?$')
+_SUB_LINE = re.compile(r'^([ \t]*)([A-Za-z]+):[ \t]*([^\r\n]*?)[ \t]*(\r?\n)?$')
+
+
+def _num(s):
+    if re.fullmatch(r'-?\d+', s):
+        return int(s)
+    if re.fullmatch(r'-?\d+\.\d+', s):
+        return float(s)
+    raise ValueError(s)
+
+
+def _policies_block(lines):
+    """定位 auth.accountPolicies。返回 dict：
+    auth=auth 行或 None；head=accountPolicies 行或 None；end=块尾后行；
+    indent=accountPolicies 缩进；items=解析结果（不支持时 None）；error=只读原因。"""
+    idx = index_config(lines)
+    auth = idx.get('auth')
+    if auth and auth['kind'] != 'block':
+        return {"error": "config.yml 的 auth 不是块结构，本页只读"}
+    head = idx.get('auth.accountPolicies')
+    out = {"auth": auth['line'] if auth else None, "head": None, "end": None,
+           "indent": None, "items": [], "error": None}
+    if head is None:
+        return out
+    h = head['line']
+    m = KEY_LINE.match(lines[h])
+    indent = len(m.group(1))
+    val, comment = split_comment(m.group(3) or '')
+    out.update(head=h, indent=indent)
+    if comment:
+        out.update(items=None, error="accountPolicies 行含注释，本页只读，请手工编辑")
+        return out
+    if val:
+        out["end"] = h + 1
+        if val.strip() == '[]':
+            return out
+        out.update(items=None, error="accountPolicies 使用 flow 写法，本页只读，请手工编辑")
+        return out
+    j, items, cur, sub = h + 1, [], None, None
+    while j < len(lines):
+        line = lines[j]
+        if not line.strip():
+            j += 1
+            continue
+        ind = len(line) - len(line.lstrip(' \t'))
+        if ind <= indent and not line.lstrip().startswith('- '):
+            break
+        if ind < indent:
+            break
+        if '#' in split_comment(line.rstrip('\r\n'))[1] or line.lstrip().startswith('#'):
+            out.update(items=None, error="accountPolicies 块内含注释，本页只读，请手工编辑")
+            return out
+        mi = _ITEM_LINE.match(line)
+        ms = _SUB_LINE.match(line)
+        try:
+            if mi:
+                cur = {"_ind": len(mi.group(1)) + 2, "account": {}}
+                items.append(cur)
+                sub = None
+                k, v = mi.group(2), _unquote(mi.group(3))
+            elif ms and cur is not None:
+                k, v = ms.group(2), _unquote(ms.group(3))
+                if len(ms.group(1)) == cur["_ind"]:
+                    sub = None
+                elif sub == "account" and len(ms.group(1)) > cur["_ind"]:
+                    if k not in SELECTOR_KEYS or not v:
+                        raise ValueError(k)
+                    cur["account"][k] = v
+                    j += 1
+                    continue
+                else:
+                    raise ValueError(k)
+            else:
+                raise ValueError(line)
+            if k == "account" and not v:
+                sub = "account"
+            elif k == "provider" and v:
+                cur["provider"] = v
+            elif k in POLICY_SCALARS and v:
+                cur[k] = _num(v)
+            else:
+                raise ValueError(k)
+        except ValueError:
+            out.update(items=None, error="accountPolicies 含本页不支持的结构，只读，请手工编辑")
+            return out
+        j += 1
+    for it in items:
+        it.pop("_ind", None)
+        if "provider" not in it or not it["account"]:
+            out.update(items=None, error="accountPolicies 有条目缺少 provider/account，只读")
+            return out
+    # 块尾：回退掉末尾空行，保持块后空行不动
+    while j > h + 1 and not lines[j - 1].strip():
+        j -= 1
+    out.update(end=j, items=items)
+    return out
+
+
+def _render_policies(items, indent, eol):
+    pad = ' ' * indent
+    if not items:
+        return [f"{pad}accountPolicies: []{eol}"]
+    out = [f"{pad}accountPolicies:{eol}"]
+    for it in items:
+        out.append(f"{pad}  - provider: {yaml_scalar(it['provider'])}{eol}")
+        out.append(f"{pad}    account:{eol}")
+        for k in SELECTOR_KEYS:
+            if k in it["account"]:
+                out.append(f"{pad}      {k}: {yaml_scalar(str(it['account'][k]))}{eol}")
+        for k in POLICY_SCALARS:
+            if it.get(k) is not None:
+                out.append(f"{pad}    {k}: {it[k]}{eol}")
+    return out
+
+
+def _write_policies(items):
+    """整段重写 auth.accountPolicies；调用方持有 _config_lock。块外内容逐字节不变。"""
+    raw = CONFIG.read_bytes().decode('utf-8')
+    eol = '\r\n' if '\r\n' in raw else '\n'
+    lines = raw.splitlines(keepends=True)
+    blk = _policies_block(lines)
+    if blk.get("error"):
+        return blk["error"]
+    if blk["head"] is not None:
+        new = _render_policies(items, blk["indent"], eol)
+        lines[blk["head"]:blk["end"]] = new
+    elif blk["auth"] is not None:
+        ind = None
+        for k in lines[blk["auth"] + 1:]:
+            if k.strip() and not k.lstrip().startswith('#'):
+                n = len(k) - len(k.lstrip(' '))
+                ind = n if n > 0 else None
+                break
+        lines[blk["auth"] + 1:blk["auth"] + 1] = _render_policies(items, ind or 2, eol)
+    else:
+        if lines and not lines[-1].endswith('\n'):
+            lines[-1] += eol
+        lines.append(f"auth:{eol}")
+        lines.extend(_render_policies(items, 2, eol))
+    write_backup()
+    CONFIG.write_bytes(''.join(lines).encode('utf-8'))
+    return None
+
+
+def _identity_parts(key):
+    """'email:a@b|org:x' / 'account:y' → {'email':..,'orgId':..,'accountId':..,'projectId':..}"""
+    names = {"email": "email", "org": "orgId", "account": "accountId", "project": "projectId"}
+    out = {}
+    for part in (key or "").split('|'):
+        k, _, v = part.partition(':')
+        if k in names and v:
+            out[names[k]] = v
+    return out
+
+
+def _policy_matches(pol_account, ident):
+    """omp 语义：选择器每个给出的字段都要对上；orgId 可选。"""
+    keys = [k for k in ("email", "accountId", "projectId") if k in pol_account]
+    if not keys:
+        return False
+    for k in keys + (["orgId"] if "orgId" in pol_account else []):
+        if pol_account[k] != ident.get(k):
+            return False
+    return True
+
+
+def _run_json(args, timeout):
+    try:
+        p = subprocess.run(args, capture_output=True, text=True, shell=False,
+                           encoding="utf-8", errors="replace", timeout=timeout,
+                           creationflags=NO_WINDOW)
+        return json.loads(p.stdout), None
+    except subprocess.TimeoutExpired:
+        return None, f"{' '.join(args[:3])} 超时"
+    except (OSError, json.JSONDecodeError) as e:
+        return None, f"{' '.join(args[:3])} 失败: {e}"
+
+
+def list_accounts():
+    return _run_json(["omp", "usage", "accounts", "--json", "--no-extensions"], 60)
+
+
+def default_reserve_pct():
+    lines = CONFIG.read_bytes().decode('utf-8').splitlines(keepends=True)
+    info = index_config(lines).get('retry.usageReservePct')
+    if info and info['kind'] == 'scalar':
+        m = KEY_LINE.match(lines[info['line']])
+        try:
+            return _num(split_comment(m.group(3) or '')[0].strip()), True
+        except ValueError:
+            pass
+    return 10, False
+
+
+def accounts_state():
+    """账号页数据：按供应商分组的账号（身份/额度/策略）+ 未匹配任何账号的策略。"""
+    res = {}
+    t1 = threading.Thread(target=lambda: res.__setitem__("acc", list_accounts()))
+    t2 = threading.Thread(target=lambda: res.__setitem__("use", usage_report()))
+    t1.start(); t2.start(); t1.join(); t2.join()
+    acc, err = res["acc"]
+    if err:
+        return {"error": err}
+    usage = res["use"] if "error" not in res["use"] else {}
+    lines = CONFIG.read_bytes().decode('utf-8').splitlines(keepends=True)
+    blk = _policies_block(lines)
+    policies = blk.get("items") or []
+    reserve, reserve_set = default_reserve_pct()
+    reports = usage.get("reports") or []
+    providers, used_policies, used_reports = {}, set(), set()
+    for a in acc.get("accounts") or []:
+        prov, key = a.get("provider"), a.get("identityKey")
+        if not key:
+            continue  # omp 未给身份的账号（如部分 devin 登录）无法按账号设策略，见 others
+        ident = _identity_parts(key)
+        rep = None
+        for ri, r in enumerate(reports):
+            md = r.get("metadata") or {}
+            if r.get("provider") != prov or ri in used_reports:
+                continue
+            same_email = ident.get("email") and \
+                str(md.get("email") or "").casefold() == ident["email"].casefold()
+            if (same_email and (not ident.get("orgId") or not md.get("orgId")
+                                or md.get("orgId") == ident["orgId"])) or \
+               (ident.get("accountId") and md.get("accountId") == ident["accountId"]):
+                rep = r
+                used_reports.add(ri)
+                break
+        if rep:
+            md = rep.get("metadata") or {}
+            for k in ("accountId", "projectId", "orgId"):
+                if md.get(k) and k not in ident:
+                    ident[k] = md[k]
+        pol = None
+        for i, p in enumerate(policies):
+            if p["provider"] == prov and _policy_matches(p["account"], ident):
+                used_policies.add(i)
+                if pol is None:
+                    pol = {"index": i, "account": p["account"],
+                           "priority": p.get("priority"), "reservePct": p.get("reservePct")}
+        providers.setdefault(prov, {"provider": prov, "accounts": [], "others": []})
+        providers[prov]["accounts"].append({
+            "identityKey": key, "email": ident.get("email"), "orgId": ident.get("orgId"),
+            "accountId": ident.get("accountId"), "orgName": a.get("orgName"),
+            "plan": ((rep or {}).get("metadata") or {}).get("planType"),
+            "report": rep, "policy": pol})
+    for ri, r in enumerate(reports):  # 有额度但对不上身份的报告也展示，不可设策略
+        if ri in used_reports:
+            continue
+        md, prov = r.get("metadata") or {}, r.get("provider")
+        providers.setdefault(prov, {"provider": prov, "accounts": [], "others": []})
+        providers[prov]["accounts"].append({
+            "identityKey": None, "email": md.get("email"), "orgId": md.get("orgId"),
+            "accountId": md.get("accountId"), "orgName": md.get("orgName"),
+            "plan": md.get("planType"), "report": r, "policy": None})
+    for a in usage.get("accountsWithoutUsage") or []:
+        prov = a.get("provider")
+        providers.setdefault(prov, {"provider": prov, "accounts": [], "others": []})
+        providers[prov]["others"].append({"type": a.get("type"),
+                                          "email": a.get("email"), "accountId": a.get("accountId")})
+    stale = [{"index": i, **p} for i, p in enumerate(policies) if i not in used_policies]
+    return {"providers": list(providers.values()), "stale": stale,
+            "defaultReservePct": reserve, "defaultReserveSet": reserve_set,
+            "editable": blk.get("error") is None, "policyError": blk.get("error"),
+            "usageError": res["use"].get("error")}
+
+
+def _check_scalars(payload):
+    out = {}
+    pr, rp = payload.get("priority"), payload.get("reservePct")
+    if pr not in (None, ""):
+        if isinstance(pr, bool) or not re.fullmatch(r'-?\d{1,6}', str(pr).strip()):
+            return None, "priority 必须是整数"
+        out["priority"] = int(str(pr).strip())
+    if rp not in (None, ""):
+        try:
+            v = _num(str(rp).strip())
+        except ValueError:
+            return None, "reservePct 必须是 0–100 的数字"
+        if isinstance(rp, bool) or not 0 <= v <= 100:
+            return None, "reservePct 必须是 0–100 的数字"
+        out["reservePct"] = v
+    return out, None
+
+
+def set_account_policy(payload):
+    """为一个已登录 OAuth 账号新增/更新/清除策略；priority 与 reservePct 均为空即删除。"""
+    provider, key = str(payload.get("provider", "")), str(payload.get("identityKey", ""))
+    if not POLICY_PROVIDER.fullmatch(provider):
+        return "非法 provider"
+    scalars, err = _check_scalars(payload)
+    if err:
+        return err
+    acc, err = list_accounts()
+    if err:
+        return err
+    if not any(a.get("provider") == provider and a.get("identityKey") == key
+               for a in acc.get("accounts") or []):
+        return "该账号不在 omp usage accounts 列表中（可能已登出）"
+    ident = _identity_parts(key)
+    for k, v in list(payload.get("extra", {}).items()) if isinstance(payload.get("extra"), dict) else []:
+        if k in ("accountId", "projectId") and SELECTOR_VALUE.fullmatch(str(v)) and k not in ident:
+            ident[k] = str(v)
+    with _config_lock:
+        lines = CONFIG.read_bytes().decode('utf-8').splitlines(keepends=True)
+        blk = _policies_block(lines)
+        if blk.get("error"):
+            return blk["error"]
+        items = blk["items"]
+        hits = [i for i, p in enumerate(items)
+                if p["provider"] == provider and _policy_matches(p["account"], ident)]
+        if not scalars:
+            if not hits:
+                return None
+            items = [p for i, p in enumerate(items) if i not in hits]
+        elif hits:
+            p = items[hits[0]]
+            for k in POLICY_SCALARS:
+                p.pop(k, None)
+            p.update(scalars)
+        else:
+            if ident.get("email"):
+                sel = {"email": ident["email"]}
+                if ident.get("orgId"):
+                    sel["orgId"] = ident["orgId"]
+            elif ident.get("accountId"):
+                sel = {"accountId": ident["accountId"]}
+            elif ident.get("projectId"):
+                sel = {"projectId": ident["projectId"]}
+            else:
+                return "该账号没有可用作选择器的 email/accountId/projectId"
+            if not all(SELECTOR_VALUE.fullmatch(v) for v in sel.values()):
+                return "账号标识含非法字符"
+            items.append({"provider": provider, "account": sel, **scalars})
+        return _write_policies(items)
+
+
+def delete_policy(payload):
+    """按序号删除一条策略；须同时给出 provider 与 account 以防序号漂移误删。"""
+    i = payload.get("index")
+    if not isinstance(i, int) or isinstance(i, bool):
+        return "缺少 index"
+    with _config_lock:
+        lines = CONFIG.read_bytes().decode('utf-8').splitlines(keepends=True)
+        blk = _policies_block(lines)
+        if blk.get("error"):
+            return blk["error"]
+        items = blk["items"]
+        if not 0 <= i < len(items) or items[i]["provider"] != payload.get("provider") \
+           or items[i]["account"] != payload.get("account"):
+            return "策略已变化，请刷新后重试"
+        del items[i]
+        return _write_policies(items)
+
 # ---------- 额度券重置（复刻 omp auth/resets.ts + usage/openai-codex-reset.ts） ----------
 # 仅支持 anthropic / openai-codex（omp 的 resets.list 也是这个白名单）。
 # token 只在本进程内存与出站 Authorization 头里出现，绝不写入响应/日志/文件。
@@ -1309,6 +1679,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(fallback_state(), ensure_ascii=False))
         elif path == "/api/cycle-order":
             self._send(200, json.dumps(cycle_order_state(), ensure_ascii=False))
+        elif path == "/api/accounts":
+            self._send(200, json.dumps(accounts_state(), ensure_ascii=False))
         else:
             self._send(404, "{}")
 
@@ -1357,6 +1729,12 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/usage/invalidate":
             self._send(200, json.dumps(
                 invalidate_usage(payload.get("provider")), ensure_ascii=False))
+        elif self.path in ("/api/accounts/policy", "/api/accounts/policy-delete"):
+            err = (set_account_policy if self.path.endswith("policy") else delete_policy)(payload)
+            if err:
+                self._send(400, json.dumps({"error": err}, ensure_ascii=False))
+            else:
+                self._send(200, json.dumps({"ok": True}, ensure_ascii=False))
         elif self.path == "/api/usage/redeem":
             self._send(200, json.dumps(
                 redeem_reset(payload.get("provider")), ensure_ascii=False))

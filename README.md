@@ -51,6 +51,10 @@
 
 - A visual dashboard mirroring `omp usage`: per-provider cards with progress bars for each rate-limit window (5h / 7d / weekly / monthly), used vs. remaining, live reset countdowns, account/plan info and reset-credit counts; shared windows are deduplicated. Manual refresh + per-provider or global force-refresh (`omp usage invalidate`, whitelist-validated) + optional 60s auto-polling, friendly empty/error states. **One-click "Reset with credit"** on anthropic/openai-codex cards — a confirmed click spends one saved reset credit through the same upstream protocol omp's `/usage reset` uses (server-side reimplementation of `resets.ts`; OAuth tokens are read from `~/.omp/agent/agent.db` and never leave the process).
 
+**Accounts**
+
+- Every account omp is signed in to, grouped by provider (identity from `omp usage accounts`, no tokens; remaining quota from `omp usage`). Each OAuth account gets a **priority** and **reserve %** editor that writes omp's native `auth.accountPolicies` in `config.yml` (backup + targeted block rewrite; everything outside the block stays byte-identical); leave both empty to clear. The global default `retry.usageReservePct` is editable on the same page. Policies that match no signed-in account are listed separately with a delete button. Priority only orders healthy, measured accounts and affects new sessions; it never overrides rate limits or reserve. Add accounts with `/login` in omp. A policy block containing comments or flow syntax is shown read-only.
+
 **Desktop widget** (`widget.py`)
 
 - A borderless dark mini window pinned to the desktop layer (never covers other apps) showing every provider's rate-limit windows from `omp usage --json` — compact bars showing remaining quota (colored by how much is left), remaining %, reset countdown, and a badge for saved reset credits. Runs standalone (no dependency on the web server), refreshes every 60 s, drag anywhere to move (position is remembered; the window is always kept fully inside the nearest monitor's work area, including after resolution/monitor/taskbar changes), right-click for refresh / force-refresh / open web panel / quit. Single-instance guarded; Win11 rounded corners; per-monitor DPI aware; `omp` subprocesses run without console windows.
@@ -105,6 +109,9 @@ Server binds to `127.0.0.1` only. Value/role inputs are validated against a whit
 | `/api/usage` | GET | `omp usage --json` passthrough — per-provider quota/usage reports |
 | `/api/usage/invalidate` | POST | `{"provider": "all"|<provider id>}` — whitelist-checked `omp usage invalidate`, forces re-fetch |
 | `/api/usage/redeem` | POST | `{"provider": "anthropic"\|"openai-codex"}` — spends one saved reset credit via the same upstream calls as omp's `/usage reset` (two-step request_id confirm for Anthropic, single idempotent consume for Codex); structured `{ok, code, error}` responses, tokens never exposed |
+| `/api/accounts` | GET | Accounts per provider (identity, quota, matching policy), unmatched policies, default reserve |
+| `/api/accounts/policy` | POST | `{"provider", "identityKey", "priority", "reservePct"}` — upsert/clear the policy of a signed-in OAuth account; validated, backed up |
+| `/api/accounts/policy-delete` | POST | `{"index", "provider", "account"}` — delete one policy; rejected if the entry no longer matches |
 
 ## License
 

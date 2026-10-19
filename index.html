@@ -130,6 +130,13 @@
   .u-mini { padding: 2px 8px; font-size: 11px; }
   .u-redeem { background: #274a2d; color: #8ee08e; margin-top: 6px; }
   .u-redeem:disabled { opacity: .45; }
+  .a-acct { border-top: 1px solid #2a2e37; padding-top: 8px; margin-top: 8px; }
+  .u-head + .a-acct { border-top: 0; margin-top: 0; padding-top: 0; }
+  .a-id { font-size: 13px; color: #d7dae0; display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; margin-bottom: 4px; }
+  .a-id .meta { font-size: 11px; color: #8b93a1; }
+  .a-pol { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; font-size: 12px; color: #8b93a1; }
+  .a-pol input { width: 70px; padding: 2px 6px; }
+  .a-tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #2b2616; color: #e3b341; }
   .role .rdesc { flex: 1; min-width: 0; font-size: 11px; color: #8b93a1;
                  line-height: 1.55; white-space: normal; }
   .role.editing .rdesc { flex-basis: 100%; order: 10; }
@@ -193,6 +200,7 @@
   <button id="tab-settings">全部设置</button>
   <button id="tab-models">模型显示</button>
   <button id="tab-usage">用量</button>
+  <button id="tab-accounts">账号</button>
 </div>
 <div id="view-roles"></div>
 <div id="view-settings" style="display:none">
@@ -227,6 +235,13 @@
     <span class="count" id="u-updated"></span>
   </div>
   <div id="u-box"></div>
+</div>
+<div id="view-accounts" style="display:none">
+  <div class="toolbar">
+    <button id="a-refresh"></button>
+    <span class="count" id="a-updated"></span>
+  </div>
+  <div id="a-box"></div>
 </div>
 <div id="toast"></div>
 <script>
@@ -303,6 +318,16 @@ const T = {
     uCredits: n => `重置额度券 ×${n}`,
     uExpire: ds => `过期 ${ds}`,
     uRemain: v => `剩余 ${v}`, uUsed: v => `已用 ${v}`,
+    tabAccounts: '账号', aRefresh: '刷新',
+    aIntro: '列出 omp 已登录的全部账号与剩余额度，可为每个 OAuth 账号设置选号策略（写入 config.yml 的 auth.accountPolicies，自动备份，omp 即时生效）。优先级越高越先用，但只在健康、额度可测的账号之间比较，不会越过限流与保留额度保护；只影响新会话，运行中的会话保持当前账号。保留额度%：剩余额度低于该值时视为接近上限、让位给其他账号。新增账号请在 omp 中执行 /login。',
+    aReserve: '全局默认保留额度%（retry.usageReservePct）', aReserveUnset: '未设置，omp 默认',
+    aPriority: '优先级', aReservePct: '保留额度%', aSave: '保存', aClear: '清除策略',
+    aNoPolicy: '未设策略（按 omp 默认选号）', aHasPolicy: '已设策略',
+    aNoIdent: 'omp 未提供该账号的身份标识，无法按账号设策略',
+    aOther: (ty) => ty === 'api_key' ? 'API Key 凭据（策略只作用于 OAuth 账号）' : 'OAuth 账号无身份/无用量数据，无法设策略',
+    aStale: '指向未登录账号的策略', aStaleHint: '这些策略匹配不到任何当前已登录账号，不会生效；账号重新登录后会自动对上。',
+    aDelete: '删除', aSaved: '已保存（已备份 config.yml）', aDeleted: '已删除',
+    aDefaultPh: n => `默认 ${n}`,
     uReset: '重置于 ', uResetNow: '即将重置',
     uNoUsageAcct: n => `无用量端点的账号 ×${n}`,
     uDisabledCred: n => `已停用凭据 ×${n}`,
@@ -417,6 +442,16 @@ const T = {
     uCredits: n => `Reset credits ×${n}`,
     uExpire: ds => `expiring ${ds}`,
     uRemain: v => `${v} left`, uUsed: v => `${v} used`,
+    tabAccounts: 'Accounts', aRefresh: 'Refresh',
+    aIntro: 'Every account omp is signed in to, with remaining quota. Set a routing policy per OAuth account (written to auth.accountPolicies in config.yml; backed up, picked up by omp immediately). Higher priority is preferred, but only among healthy, measured accounts — it never overrides rate-limit blocks or quota reserve, and it only affects new sessions; running sessions keep their account. Reserve %: below this remaining share an account counts as near its limit and yields to others. Add accounts with /login in omp.',
+    aReserve: 'Global default reserve % (retry.usageReservePct)', aReserveUnset: 'unset, omp default',
+    aPriority: 'Priority', aReservePct: 'Reserve %', aSave: 'Save', aClear: 'Clear policy',
+    aNoPolicy: 'No policy (omp default ranking)', aHasPolicy: 'Policy set',
+    aNoIdent: 'omp reports no identity for this account; per-account policy is not possible',
+    aOther: (ty) => ty === 'api_key' ? 'API-key credential (policies apply to OAuth accounts only)' : 'OAuth account without identity/usage data; no policy possible',
+    aStale: 'Policies for accounts not signed in', aStaleHint: 'These match no signed-in account and have no effect; they apply again once the account signs back in.',
+    aDelete: 'Delete', aSaved: 'Saved (config.yml backed up)', aDeleted: 'Deleted',
+    aDefaultPh: n => `default ${n}`,
     uReset: 'resets ', uResetNow: 'resetting soon',
     uNoUsageAcct: n => `Accounts without usage endpoints ×${n}`,
     uDisabledCred: n => `Disabled credentials ×${n}`,
@@ -491,6 +526,8 @@ function applyStaticLang() {
   document.getElementById('tab-settings').textContent = t().tabSettings;
   document.getElementById('tab-models').textContent = t().tabModels;
   document.getElementById('tab-usage').textContent = t().tabUsage;
+  document.getElementById('tab-accounts').textContent = t().tabAccounts;
+  document.getElementById('a-refresh').textContent = t().aRefresh;
   document.getElementById('u-refresh').textContent = t().uRefresh;
   document.getElementById('u-auto-text').textContent = t().uAuto;
   document.getElementById('u-force').textContent = t().uForceAll;
@@ -508,6 +545,7 @@ function rerenderDynamic() { // 不整页重载：重渲染两个页签的动态
   if (settingsCache.length) { renderNav(hitsByGroup()); renderGroup(); }
   if (vm.models.length) renderModels();
   if (us.data) renderUsage();
+  if (ac.data) renderAccounts();
 }
 function setLang(lang) {
   if (LANG === lang) return;
@@ -530,15 +568,13 @@ document.getElementById('tab-roles').onclick = () => switchTab('roles');
 document.getElementById('tab-settings').onclick = () => switchTab('settings');
 document.getElementById('tab-models').onclick = () => switchTab('models');
 document.getElementById('tab-usage').onclick = () => switchTab('usage');
+document.getElementById('tab-accounts').onclick = () => switchTab('accounts');
 function switchTab(which) {
-  document.getElementById('tab-roles').classList.toggle('active', which === 'roles');
-  document.getElementById('tab-settings').classList.toggle('active', which === 'settings');
-  document.getElementById('tab-models').classList.toggle('active', which === 'models');
-  document.getElementById('tab-usage').classList.toggle('active', which === 'usage');
-  document.getElementById('view-roles').style.display = which === 'roles' ? '' : 'none';
-  document.getElementById('view-settings').style.display = which === 'settings' ? '' : 'none';
-  document.getElementById('view-models').style.display = which === 'models' ? '' : 'none';
-  document.getElementById('view-usage').style.display = which === 'usage' ? '' : 'none';
+  for (const v of ['roles', 'settings', 'models', 'usage', 'accounts']) {
+    document.getElementById('tab-' + v).classList.toggle('active', which === v);
+    document.getElementById('view-' + v).style.display = which === v ? '' : 'none';
+  }
+  if (which === 'accounts') loadAccounts();
   if (which === 'settings' && !document.getElementById('settings').childElementCount) loadSettings();
   if (which === 'models') loadModels();
   if (which === 'usage') { loadUsage(); startUsageTimer(); } else stopUsageTimer();
@@ -1635,6 +1671,144 @@ function uLimitRow(l) {
   }
   row.appendChild(sub);
   return row;
+}
+
+/* ---------- 账号 / Accounts（omp usage accounts + auth.accountPolicies） ---------- */
+const ac = { data: null };
+function mk(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+document.getElementById('a-refresh').onclick = () => loadAccounts();
+async function loadAccounts() {
+  const btn = document.getElementById('a-refresh'), box = document.getElementById('a-box');
+  btn.disabled = true;
+  if (!ac.data) { box.innerHTML = ''; box.appendChild(mk('div', 'empty-hint', t().uLoading)); }
+  try {
+    const r = await fetch('/api/accounts').then(x => x.json());
+    if (r.error) {
+      toast(t().failed(r.error), true);
+      if (!ac.data) { box.innerHTML = ''; box.appendChild(mk('div', 'empty-hint', t().failed(r.error))); }
+    } else { ac.data = r; renderAccounts(); }
+  } catch (e) { toast(t().failed(e.message || e), true); }
+  btn.disabled = false;
+}
+async function postJSON(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                               body: JSON.stringify(body) });
+  return r.json();
+}
+function renderAccounts() {
+  const d = ac.data, box = document.getElementById('a-box');
+  box.innerHTML = '';
+  document.getElementById('a-updated').textContent = t().uUpdated(fmtTime(Date.now()));
+  box.appendChild(mk('div', 'vm-note', t().aIntro));
+  if (d.policyError) box.appendChild(mk('div', 'u-extra', '⚠ ' + d.policyError));
+  if (d.usageError) box.appendChild(mk('div', 'u-extra', '⚠ ' + d.usageError));
+
+  const rv = mk('div', 'a-pol');
+  rv.appendChild(mk('span', '', t().aReserve));
+  const ri = mk('input'); ri.type = 'number'; ri.min = 0; ri.max = 100;
+  ri.value = d.defaultReserveSet ? d.defaultReservePct : '';
+  ri.placeholder = t().aDefaultPh(d.defaultReservePct);
+  const rs = mk('button', 'u-mini', t().aSave);
+  rs.onclick = async () => {
+    const r = await postJSON('/api/set-key', { key: 'retry.usageReservePct', value: ri.value.trim() });
+    if (r.error) toast(t().failed(r.error), true); else { toast(t().aSaved); loadAccounts(); }
+  };
+  rv.append(ri, rs);
+  if (!d.defaultReserveSet) rv.appendChild(mk('span', '', t().aReserveUnset));
+  box.appendChild(rv);
+
+  for (const p of d.providers) {
+    const card = mk('div', 'u-card');
+    const head = mk('div', 'u-head');
+    head.appendChild(mk('span', 'pname', p.provider));
+    head.appendChild(mk('span', 'meta', `× ${p.accounts.length + p.others.length}`));
+    card.appendChild(head);
+    for (const a of p.accounts) card.appendChild(accountBlock(p.provider, a, d));
+    for (const o of p.others) {
+      const x = mk('div', 'a-acct');
+      x.appendChild(mk('div', 'a-id', [o.email || o.accountId || (o.type || '').toUpperCase()].join('')));
+      x.appendChild(mk('div', 'u-extra', t().aOther(o.type)));
+      card.appendChild(x);
+    }
+    box.appendChild(card);
+  }
+
+  if (d.stale.length) {
+    const card = mk('div', 'u-card');
+    const head = mk('div', 'u-head');
+    head.appendChild(mk('span', 'pname', t().aStale));
+    card.appendChild(head);
+    card.appendChild(mk('div', 'u-extra', t().aStaleHint));
+    for (const s of d.stale) {
+      const row = mk('div', 'a-pol');
+      const bits = [s.provider, Object.entries(s.account).map(([k, v]) => `${k}=${v}`).join(', ')];
+      if (s.priority != null) bits.push(`${t().aPriority} ${s.priority}`);
+      if (s.reservePct != null) bits.push(`${t().aReservePct} ${s.reservePct}`);
+      row.appendChild(mk('span', '', bits.join(' · ')));
+      const del = mk('button', 'ghost u-mini', t().aDelete);
+      del.disabled = !d.editable;
+      del.onclick = async () => {
+        const r = await postJSON('/api/accounts/policy-delete',
+                                 { index: s.index, provider: s.provider, account: s.account });
+        if (r.error) toast(t().failed(r.error), true); else { toast(t().aDeleted); loadAccounts(); }
+      };
+      row.appendChild(del);
+      card.appendChild(row);
+    }
+    box.appendChild(card);
+  }
+}
+function accountBlock(provider, a, d) {
+  const x = mk('div', 'a-acct');
+  const id = mk('div', 'a-id');
+  id.appendChild(mk('span', '', a.email || a.accountId || '?'));
+  const meta = [a.orgName, a.plan].filter(Boolean).join(' · ');
+  if (meta) id.appendChild(mk('span', 'meta', meta));
+  if (a.policy) id.appendChild(mk('span', 'a-tag', t().aHasPolicy));
+  x.appendChild(id);
+  const rep = a.report || {};
+  const seen = new Set();
+  for (const l of (rep.limits || [])) {
+    const g = l.scope && l.scope.sharedGroup;
+    const key = (g || l.id || '') + '|' + ((l.window || {}).id || '');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const row = uLimitRow(l);
+    const rs = row.querySelector('[data-resets-at]');
+    if (rs) rs.textContent = t().uReset + fmtDur(+rs.dataset.resetsAt - Date.now());
+    x.appendChild(row);
+  }
+  const rc = rep.resetCredits;
+  if (rc && rc.availableCount) x.appendChild(mk('div', 'u-note', t().uCredits(rc.availableCount)));
+  if (!a.identityKey) { x.appendChild(mk('div', 'u-extra', t().aNoIdent)); return x; }
+
+  const pol = mk('div', 'a-pol');
+  const pr = mk('input'); pr.type = 'number'; pr.step = 1;
+  pr.value = a.policy && a.policy.priority != null ? a.policy.priority : '';
+  pr.placeholder = '0';
+  const rp = mk('input'); rp.type = 'number'; rp.min = 0; rp.max = 100;
+  rp.value = a.policy && a.policy.reservePct != null ? a.policy.reservePct : '';
+  rp.placeholder = t().aDefaultPh(d.defaultReservePct);
+  const save = mk('button', 'u-mini', t().aSave);
+  const clear = mk('button', 'ghost u-mini', t().aClear);
+  save.disabled = clear.disabled = !d.editable;
+  clear.disabled = clear.disabled || !a.policy;
+  const send = async (priority, reservePct) => {
+    const r = await postJSON('/api/accounts/policy', { provider, identityKey: a.identityKey,
+      priority, reservePct, extra: { accountId: a.accountId } });
+    if (r.error) toast(t().failed(r.error), true); else { toast(t().aSaved); loadAccounts(); }
+  };
+  save.onclick = () => send(pr.value.trim(), rp.value.trim());
+  clear.onclick = () => send('', '');
+  pol.append(mk('span', '', t().aPriority), pr, mk('span', '', t().aReservePct), rp, save, clear);
+  if (!a.policy) pol.appendChild(mk('span', '', t().aNoPolicy));
+  x.appendChild(pol);
+  return x;
 }
 
 function tickUsage() { // 每秒更新倒计时；勾选自动刷新时每 60s 重拉

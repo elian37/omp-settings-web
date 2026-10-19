@@ -52,6 +52,10 @@
 
 - 复刻 omp `/usage` 的可视面板：按供应商分卡的限额进度条（5 小时/7 天/周/月窗口）、已用与剩余量、重置倒计时实时跳动、账号/套餐信息与重置额度券；共享窗口自动去重。手动刷新 + 单供应商/全局「强刷」（`omp usage invalidate`，白名单校验）+ 可选 60 秒自动轮询，数据为空或拉取失败时给出提示而非白屏。anthropic / openai-codex 卡片支持「用券重置」——确认后经 omp `/usage reset` 同款上游协议消耗一张额度券（服务端复刻 `resets.ts`；OAuth token 从 `~/.omp/agent/agent.db` 读取，永不出进程）。
 
+**账号**
+
+- 按供应商列出 omp 已登录的全部账号（身份取自 `omp usage accounts`，不含 token；剩余额度取自 `omp usage`）。每个 OAuth 账号可设**优先级**与**保留额度%**，写入 omp 原生的 `config.yml` `auth.accountPolicies`（自动备份、只整段重写该块，块外逐字节不变），两项都留空即清除。同页可改全局默认 `retry.usageReservePct`。匹配不到任何已登录账号的策略单独列出并可删除。优先级只在健康、额度可测的账号之间排序，只影响新会话，不会越过限流与保留额度保护。新增账号请在 omp 中执行 `/login`。策略块含注释或 flow 写法时只读展示。
+
 **桌面小窗** (`widget.py`)
 
 - 贴桌面层的无边框暗色小窗（始终在所有应用窗口之下），直接读 `omp usage --json` 展示各供应商额度窗口（按剩余量着色的进度条、剩余百分比、重置倒计时、额度券角标）；独立运行不依赖网页服务，60 秒自动刷新，任意处拖动且记住位置（始终完整限制在所在显示器的工作区内，切换分辨率/显示器/任务栏后自动拉回），右键可刷新/强制刷新/打开网页面板/退出；防双开、Win11 圆角、高分屏清晰、调用 omp 不弹控制台。
@@ -106,6 +110,9 @@ pythonw widget.py           # 无控制台窗口；右键小窗调出菜单
 | `/api/usage` | GET | `omp usage --json` 透传 — 按供应商的额度/用量报告 |
 | `/api/usage/invalidate` | POST | `{"provider": "all"|<provider id>}` — 白名单校验的 `omp usage invalidate`，强制重抓 |
 | `/api/usage/redeem` | POST | `{"provider": "anthropic"\|"openai-codex"}` — 消耗一张额度券（anthropic 两步 request_id 确认、openai-codex 单步幂等），结构化 `{ok, code, error}` 响应，token 永不外泄 |
+| `/api/accounts` | GET | 按供应商的账号（身份、额度、命中的策略）、未匹配的策略、默认保留额度 |
+| `/api/accounts/policy` | POST | `{"provider", "identityKey", "priority", "reservePct"}` — 为已登录 OAuth 账号新增/更新/清除策略；校验 + 备份 |
+| `/api/accounts/policy-delete` | POST | `{"index", "provider", "account"}` — 删除一条策略；条目已变化则拒绝 |
 
 ## License
 
