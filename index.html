@@ -319,12 +319,10 @@ const T = {
     uExpire: ds => `过期 ${ds}`,
     uRemain: v => `剩余 ${v}`, uUsed: v => `已用 ${v}`,
     tabAccounts: '账号', aRefresh: '刷新',
-    aIntro: '列出 omp 已登录的全部账号与剩余额度，可为每个 OAuth 账号设置选号策略（写入 config.yml 的 auth.accountPolicies，自动备份，omp 即时生效）。优先级越高越先用，但只在健康、额度可测的账号之间比较，不会越过限流与保留额度保护；只影响新会话，运行中的会话保持当前账号。保留额度%：剩余额度低于该值时视为接近上限、让位给其他账号。新增账号请在 omp 中执行 /login。',
+    aIntro: '列出 omp 可按账号设置选号策略的 OAuth 账号与剩余额度（无身份标识的登录、API Key 凭据不显示），可为每个账号设置选号策略（写入 config.yml 的 auth.accountPolicies，自动备份，omp 即时生效）。优先级越高越先用，但只在健康、额度可测的账号之间比较，不会越过限流与保留额度保护；只影响新会话，运行中的会话保持当前账号。保留额度%：剩余额度低于该值时视为接近上限、让位给其他账号。新增账号请在 omp 中执行 /login。',
     aReserve: '全局默认保留额度%（retry.usageReservePct）', aReserveUnset: '未设置，omp 默认',
     aPriority: '优先级', aReservePct: '保留额度%', aSave: '保存', aClear: '清除策略',
     aNoPolicy: '未设策略（按 omp 默认选号）', aHasPolicy: '已设策略',
-    aNoIdent: 'omp 未提供该账号的身份标识，无法按账号设策略',
-    aOther: (ty) => ty === 'api_key' ? 'API Key 凭据（策略只作用于 OAuth 账号）' : 'OAuth 账号无身份/无用量数据，无法设策略',
     aStale: '指向未登录账号的策略', aStaleHint: '这些策略匹配不到任何当前已登录账号，不会生效；账号重新登录后会自动对上。',
     aDelete: '删除', aSaved: '已保存（已备份 config.yml）', aDeleted: '已删除',
     aDefaultPh: n => `默认 ${n}`,
@@ -443,12 +441,10 @@ const T = {
     uExpire: ds => `expiring ${ds}`,
     uRemain: v => `${v} left`, uUsed: v => `${v} used`,
     tabAccounts: 'Accounts', aRefresh: 'Refresh',
-    aIntro: 'Every account omp is signed in to, with remaining quota. Set a routing policy per OAuth account (written to auth.accountPolicies in config.yml; backed up, picked up by omp immediately). Higher priority is preferred, but only among healthy, measured accounts — it never overrides rate-limit blocks or quota reserve, and it only affects new sessions; running sessions keep their account. Reserve %: below this remaining share an account counts as near its limit and yields to others. Add accounts with /login in omp.',
+    aIntro: 'OAuth accounts omp can route per account, with remaining quota (logins without an identity and API-key credentials are not shown). Set a routing policy per account (written to auth.accountPolicies in config.yml; backed up, picked up by omp immediately). Higher priority is preferred, but only among healthy, measured accounts — it never overrides rate-limit blocks or quota reserve, and it only affects new sessions; running sessions keep their account. Reserve %: below this remaining share an account counts as near its limit and yields to others. Add accounts with /login in omp.',
     aReserve: 'Global default reserve % (retry.usageReservePct)', aReserveUnset: 'unset, omp default',
     aPriority: 'Priority', aReservePct: 'Reserve %', aSave: 'Save', aClear: 'Clear policy',
     aNoPolicy: 'No policy (omp default ranking)', aHasPolicy: 'Policy set',
-    aNoIdent: 'omp reports no identity for this account; per-account policy is not possible',
-    aOther: (ty) => ty === 'api_key' ? 'API-key credential (policies apply to OAuth accounts only)' : 'OAuth account without identity/usage data; no policy possible',
     aStale: 'Policies for accounts not signed in', aStaleHint: 'These match no signed-in account and have no effect; they apply again once the account signs back in.',
     aDelete: 'Delete', aSaved: 'Saved (config.yml backed up)', aDeleted: 'Deleted',
     aDefaultPh: n => `default ${n}`,
@@ -1726,15 +1722,9 @@ function renderAccounts() {
     const card = mk('div', 'u-card');
     const head = mk('div', 'u-head');
     head.appendChild(mk('span', 'pname', p.provider));
-    head.appendChild(mk('span', 'meta', `× ${p.accounts.length + p.others.length}`));
+    head.appendChild(mk('span', 'meta', `× ${p.accounts.length}`));
     card.appendChild(head);
     for (const a of p.accounts) card.appendChild(accountBlock(p.provider, a, d));
-    for (const o of p.others) {
-      const x = mk('div', 'a-acct');
-      x.appendChild(mk('div', 'a-id', [o.email || o.accountId || (o.type || '').toUpperCase()].join('')));
-      x.appendChild(mk('div', 'u-extra', t().aOther(o.type)));
-      card.appendChild(x);
-    }
     box.appendChild(card);
   }
 
@@ -1785,7 +1775,6 @@ function accountBlock(provider, a, d) {
   }
   const rc = rep.resetCredits;
   if (rc && rc.availableCount) x.appendChild(mk('div', 'u-note', t().uCredits(rc.availableCount)));
-  if (!a.identityKey) { x.appendChild(mk('div', 'u-extra', t().aNoIdent)); return x; }
 
   const pol = mk('div', 'a-pol');
   const pr = mk('input'); pr.type = 'number'; pr.step = 1;

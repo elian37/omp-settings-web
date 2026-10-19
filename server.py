@@ -1221,7 +1221,7 @@ def accounts_state():
     for a in acc.get("accounts") or []:
         prov, key = a.get("provider"), a.get("identityKey")
         if not key:
-            continue  # omp 未给身份的账号（如部分 devin 登录）无法按账号设策略，见 others
+            continue  # omp 未给身份的账号（如部分 devin 登录）无法按账号设策略，不展示
         ident = _identity_parts(key)
         rep = None
         for ri, r in enumerate(reports):
@@ -1248,26 +1248,12 @@ def accounts_state():
                 if pol is None:
                     pol = {"index": i, "account": p["account"],
                            "priority": p.get("priority"), "reservePct": p.get("reservePct")}
-        providers.setdefault(prov, {"provider": prov, "accounts": [], "others": []})
+        providers.setdefault(prov, {"provider": prov, "accounts": []})
         providers[prov]["accounts"].append({
             "identityKey": key, "email": ident.get("email"), "orgId": ident.get("orgId"),
             "accountId": ident.get("accountId"), "orgName": a.get("orgName"),
             "plan": ((rep or {}).get("metadata") or {}).get("planType"),
             "report": rep, "policy": pol})
-    for ri, r in enumerate(reports):  # 有额度但对不上身份的报告也展示，不可设策略
-        if ri in used_reports:
-            continue
-        md, prov = r.get("metadata") or {}, r.get("provider")
-        providers.setdefault(prov, {"provider": prov, "accounts": [], "others": []})
-        providers[prov]["accounts"].append({
-            "identityKey": None, "email": md.get("email"), "orgId": md.get("orgId"),
-            "accountId": md.get("accountId"), "orgName": md.get("orgName"),
-            "plan": md.get("planType"), "report": r, "policy": None})
-    for a in usage.get("accountsWithoutUsage") or []:
-        prov = a.get("provider")
-        providers.setdefault(prov, {"provider": prov, "accounts": [], "others": []})
-        providers[prov]["others"].append({"type": a.get("type"),
-                                          "email": a.get("email"), "accountId": a.get("accountId")})
     stale = [{"index": i, **p} for i, p in enumerate(policies) if i not in used_policies]
     return {"providers": list(providers.values()), "stale": stale,
             "defaultReservePct": reserve, "defaultReserveSet": reserve_set,

@@ -54,7 +54,7 @@
 
 **账号**
 
-- 按供应商列出 omp 已登录的全部账号（身份取自 `omp usage accounts`，不含 token；剩余额度取自 `omp usage`）。每个 OAuth 账号可设**优先级**与**保留额度%**，写入 omp 原生的 `config.yml` `auth.accountPolicies`（自动备份、只整段重写该块，块外逐字节不变），两项都留空即清除。同页可改全局默认 `retry.usageReservePct`。匹配不到任何已登录账号的策略单独列出并可删除。优先级只在健康、额度可测的账号之间排序，只影响新会话，不会越过限流与保留额度保护。新增账号请在 omp 中执行 `/login`。策略块含注释或 flow 写法时只读展示。
+- 按供应商列出 omp 可按账号设策略的 OAuth 账号（身份取自 `omp usage accounts`，不含 token；剩余额度取自 `omp usage`），无身份标识的登录与 API Key 凭据不显示。每个账号可设**优先级**与**保留额度%**，写入 omp 原生的 `config.yml` `auth.accountPolicies`（自动备份、只整段重写该块，块外逐字节不变），两项都留空即清除。同页可改全局默认 `retry.usageReservePct`。匹配不到任何已登录账号的策略单独列出并可删除。优先级只在健康、额度可测的账号之间排序，只影响新会话，不会越过限流与保留额度保护。新增账号请在 omp 中执行 `/login`。策略块含注释或 flow 写法时只读展示。
 
 **桌面小窗** (`widget.py`)
 
