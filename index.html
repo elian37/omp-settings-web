@@ -319,10 +319,12 @@ const T = {
     uExpire: ds => `过期 ${ds}`,
     uRemain: v => `剩余 ${v}`, uUsed: v => `已用 ${v}`,
     tabAccounts: '账号', aRefresh: '刷新',
-    aIntro: '列出 omp 可按账号设置选号策略的 OAuth 账号与剩余额度（无身份标识的登录、API Key 凭据不显示），可为每个账号设置选号策略（写入 config.yml 的 auth.accountPolicies，自动备份，omp 即时生效）。优先级越高越先用，但只在健康、额度可测的账号之间比较，不会越过限流与保留额度保护；只影响新会话，运行中的会话保持当前账号。保留额度%：剩余额度低于该值时视为接近上限、让位给其他账号。新增账号请在 omp 中执行 /login。',
+    aIntro: '列出 omp 可按账号设置选号策略的 OAuth 账号与剩余额度（无身份标识的登录、API Key 凭据不显示），可为每个账号设置选号策略（写入 config.yml 的 auth.accountPolicies，自动备份，omp 即时生效）。优先级越高越先用，但只在健康、额度可测的账号之间比较，不会越过限流与保留额度保护；只影响新会话，运行中的会话保持当前账号。保留额度%：剩余额度低于该值时视为接近上限、让位给其他账号。「停用（仅兜底）」不是完全停用：它把该账号保留额度设为 100%，平时不选，只在其他账号都被限流、用完或进入保留额度时兜底使用。新增账号请在 omp 中执行 /login。',
     aReserve: '全局默认保留额度%（retry.usageReservePct）', aReserveUnset: '未设置，omp 默认',
     aPriority: '优先级', aReservePct: '保留额度%', aSave: '保存', aClear: '清除策略',
     aNoPolicy: '未设策略（按 omp 默认选号）', aHasPolicy: '已设策略',
+    aDisable: '停用（仅兜底）', aEnable: '启用', aDisabledTag: '已停用 · 仅兜底',
+    aDisableNote: '停用不是完全停用：账号保留额度被设为 100%，平时不会被选中，只在其他账号都被限流、额度用完或进入保留额度时作为兜底使用；启用会清除该账号的保留额度（回到全局默认），优先级不变。',
     aStale: '指向未登录账号的策略', aStaleHint: '这些策略匹配不到任何当前已登录账号，不会生效；账号重新登录后会自动对上。',
     aDelete: '删除', aSaved: '已保存（已备份 config.yml）', aDeleted: '已删除',
     aDefaultPh: n => `默认 ${n}`,
@@ -441,10 +443,12 @@ const T = {
     uExpire: ds => `expiring ${ds}`,
     uRemain: v => `${v} left`, uUsed: v => `${v} used`,
     tabAccounts: 'Accounts', aRefresh: 'Refresh',
-    aIntro: 'OAuth accounts omp can route per account, with remaining quota (logins without an identity and API-key credentials are not shown). Set a routing policy per account (written to auth.accountPolicies in config.yml; backed up, picked up by omp immediately). Higher priority is preferred, but only among healthy, measured accounts — it never overrides rate-limit blocks or quota reserve, and it only affects new sessions; running sessions keep their account. Reserve %: below this remaining share an account counts as near its limit and yields to others. Add accounts with /login in omp.',
+    aIntro: 'OAuth accounts omp can route per account, with remaining quota (logins without an identity and API-key credentials are not shown). Set a routing policy per account (written to auth.accountPolicies in config.yml; backed up, picked up by omp immediately). Higher priority is preferred, but only among healthy, measured accounts — it never overrides rate-limit blocks or quota reserve, and it only affects new sessions; running sessions keep their account. Reserve %: below this remaining share an account counts as near its limit and yields to others. "Disable (fallback only)" is not a hard off: it sets the account\'s reserve to 100%, so it is skipped normally and used only when every other account is rate-limited, exhausted, or inside its reserve. Add accounts with /login in omp.',
     aReserve: 'Global default reserve % (retry.usageReservePct)', aReserveUnset: 'unset, omp default',
     aPriority: 'Priority', aReservePct: 'Reserve %', aSave: 'Save', aClear: 'Clear policy',
     aNoPolicy: 'No policy (omp default ranking)', aHasPolicy: 'Policy set',
+    aDisable: 'Disable (fallback only)', aEnable: 'Enable', aDisabledTag: 'Disabled · fallback only',
+    aDisableNote: 'Disabling is not a hard off: the account\'s reserve is set to 100%, so it is skipped normally and used only as a fallback when every other account is rate-limited, exhausted, or inside its reserve. Enabling clears its reserve (back to the global default); priority is kept.',
     aStale: 'Policies for accounts not signed in', aStaleHint: 'These match no signed-in account and have no effect; they apply again once the account signs back in.',
     aDelete: 'Delete', aSaved: 'Saved (config.yml backed up)', aDeleted: 'Deleted',
     aDefaultPh: n => `default ${n}`,
@@ -1759,7 +1763,9 @@ function accountBlock(provider, a, d) {
   id.appendChild(mk('span', '', a.email || a.accountId || '?'));
   const meta = [a.orgName, a.plan].filter(Boolean).join(' · ');
   if (meta) id.appendChild(mk('span', 'meta', meta));
-  if (a.policy) id.appendChild(mk('span', 'a-tag', t().aHasPolicy));
+  const off = !!(a.policy && a.policy.reservePct === 100);
+  if (off) id.appendChild(mk('span', 'a-tag', t().aDisabledTag));
+  else if (a.policy) id.appendChild(mk('span', 'a-tag', t().aHasPolicy));
   x.appendChild(id);
   const rep = a.report || {};
   const seen = new Set();
@@ -1794,9 +1800,14 @@ function accountBlock(provider, a, d) {
   };
   save.onclick = () => send(pr.value.trim(), rp.value.trim());
   clear.onclick = () => send('', '');
-  pol.append(mk('span', '', t().aPriority), pr, mk('span', '', t().aReservePct), rp, save, clear);
+  const tog = mk('button', off ? 'u-mini' : 'ghost u-mini', off ? t().aEnable : t().aDisable);
+  tog.disabled = !d.editable;
+  tog.title = t().aDisableNote;
+  tog.onclick = () => send(pr.value.trim(), off ? '' : 100);
+  pol.append(mk('span', '', t().aPriority), pr, mk('span', '', t().aReservePct), rp, save, clear, tog);
   if (!a.policy) pol.appendChild(mk('span', '', t().aNoPolicy));
   x.appendChild(pol);
+  if (off) x.appendChild(mk('div', 'u-extra', t().aDisableNote));
   return x;
 }
 

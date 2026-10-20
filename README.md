@@ -54,6 +54,7 @@
 **Accounts**
 
 - OAuth accounts omp can route per account, grouped by provider (identity from `omp usage accounts`, no tokens; remaining quota from `omp usage`); logins without an identity and API-key credentials are not shown. Each account gets a **priority** and **reserve %** editor that writes omp's native `auth.accountPolicies` in `config.yml` (backup + targeted block rewrite; everything outside the block stays byte-identical); leave both empty to clear. The global default `retry.usageReservePct` is editable on the same page. Policies that match no signed-in account are listed separately with a delete button. Priority only orders healthy, measured accounts and affects new sessions; it never overrides rate limits or reserve. Add accounts with `/login` in omp. A policy block containing comments or flow syntax is shown read-only.
+- Each account has a **Disable (fallback only)** / **Enable** button. Disabling is **not a hard off**: it writes the account's reserve as 100% (omp's native policy has no disable field), so the account is skipped normally — sessions pinned to it move away on their next request — and is used only as a fallback when every other account is rate-limited, exhausted, or inside its reserve. Enabling clears the account's reserve (back to the global default; a previous custom reserve is not kept); priority is unchanged.
 
 **Desktop widget** (`widget.py`)
 
