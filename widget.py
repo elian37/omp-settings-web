@@ -4,6 +4,9 @@
 Run with pythonw (no console). Drag anywhere to move; position is remembered and the window is
 kept fully inside the nearest monitor's work area (on start, drag, and display/resolution changes).
 Right-click menu: Refresh / Force refresh / Open web panel / Quit. Stdlib only.
+
+`QuotaView` is the quota list itself (data + drawing) and can be embedded in any Tk parent;
+desktop-widgets' Model Quota tab loads this file and reuses it, so quota logic lives only here.
 """
 import ctypes
 import json
@@ -46,28 +49,44 @@ def single_instance():
     return k32.GetLastError() != 183  # ERROR_ALREADY_EXISTS
 
 
-def run_omp(args, timeout, no_ext=True):
-    return subprocess.run(["omp", *args, *(["--no-extensions"] if no_ext else [])], capture_output=True,
-                          text=True, encoding="utf-8", errors="replace", timeout=timeout,
-                          creationflags=NO_WINDOW)
+def run_omp(args, timeout, no_ext=True, omp="omp", procs=None):
+    """Run omp; `procs` (a set) tracks the child so an embedding host can kill it on close."""
+    proc = subprocess.Popen([omp, *args, *(["--no-extensions"] if no_ext else [])],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                            creationflags=NO_WINDOW)
+    if procs is not None:
+        procs.add(proc)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        raise
+    finally:
+        if procs is not None:
+            procs.discard(proc)
+    return proc.returncode, out.decode("utf-8", "replace"), err.decode("utf-8", "replace")
 
 
-def fetch_usage(invalidate):
+def fetch_usage(invalidate, omp="omp", procs=None):
     try:
         if invalidate:
-            run_omp(["usage", "invalidate"], 60)
-        p = run_omp(["usage", "--json"], 120)
+            run_omp(["usage", "invalidate"], 60, omp=omp, procs=procs)
+        _, out, err = run_omp(["usage", "--json"], 120, omp=omp, procs=procs)
     except (OSError, subprocess.TimeoutExpired) as e:
         return None, f"omp call failed: {e}"
     try:
-        data = json.loads(p.stdout)
-    except json.JSONDecodeError:
-        err = (p.stderr or "").strip().splitlines()
-        return None, err[0] if err else "unparseable omp usage output"
-    try:  # 账号策略只用于标记「停用·兜底」，取不到就不标
-        pol = json.loads(run_omp(["config", "get", "auth.accountPolicies"], 30, no_ext=False).stdout)
+        data = json.loads(out)
+        if not isinstance(data, dict) or not isinstance(data.get("reports"), list):
+            raise ValueError
+    except ValueError:
+        lines = err.strip().splitlines()
+        return None, lines[0] if lines else "unparseable omp usage output"
+    try:  # 账号策略只用于标记「停用·兜底」，取不到就不标；`omp config get` 不接受 --no-extensions
+        _, out, _ = run_omp(["config", "get", "auth.accountPolicies"], 30, no_ext=False, omp=omp, procs=procs)
+        pol = json.loads(out)
         data["_policies"] = pol if isinstance(pol, list) else []
-    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+    except (OSError, subprocess.TimeoutExpired, ValueError):
         data["_policies"] = []
     return data, None
 
@@ -120,10 +139,19 @@ def provider_rows(rep):
         rows.append({
             "name": f"{label} {tag}".strip() if repeated else (tag or label),
             "frac": frac,  # remaining fraction: full bar = quota healthy
-            "status": lim.get("status") or "unknown",
             "resets": w.get("resetsAt"),
         })
     return rows
+
+
+def visible_quota(reports):
+    """(report, rows) pairs; rows without a numeric remaining share and providers left empty are hidden."""
+    shown = []
+    for rep in reports or []:
+        rows = [r for r in provider_rows(rep) if r["frac"] is not None]
+        if rows:
+            shown.append((rep, rows))
+    return shown
 
 
 def load_state():
@@ -183,85 +211,79 @@ def work_area(x, y):
         return None
 
 
-class Widget:
-    def __init__(self):
-        self.root = root = tk.Tk()
-        root.title("Model Quota")
-        root.overrideredirect(True)
-        # Desktop-level: stay beneath every app window (re-sink after any click/focus)
-        root.attributes("-alpha", 0.95)
-        root.configure(bg=EDGE)
-        self.k = root.winfo_fpixels("1i") / 96  # 像素尺寸随 DPI 缩放
+class QuotaView:
+    """The quota list: background refresh, provider headers, limit rows, provider reordering.
 
-        card = tk.Frame(root, bg=BG, padx=self.px(12), pady=self.px(10))
-        card.pack(padx=1, pady=1)
-        head = tk.Frame(card, bg=BG)
-        head.pack(fill="x")
-        tk.Label(head, text="Model Quota", font=(FONT, 10, "bold"), fg=FG, bg=BG).pack(side="left")
-        close = tk.Label(head, text="×", font=(NUM_FONT, 11), fg=DIM, bg=BG, cursor="hand2")
-        close.pack(side="right", padx=(self.px(6), 0))
-        close.bind("<Button-1>", lambda e: self.quit())
-        again = tk.Label(head, text="⟳", font=(NUM_FONT, 10), fg=DIM, bg=BG, cursor="hand2")
-        again.pack(side="right", padx=(self.px(6), 0))
-        again.bind("<Button-1>", lambda e: self.refresh())
-        self.stamp = tk.Label(head, text="", font=(FONT, 8), fg=DIM, bg=BG, width=8, anchor="e")
-        self.stamp.pack(side="right")
-        self.body = tk.Frame(card, bg=BG)
-        self.body.pack(fill="x", pady=(self.px(4), 0))
+    Embeddable in any Tk parent. Callbacks: on_order(names) persists a new provider order,
+    on_render() runs after each redraw (hosts re-fit their window or scroll region).
+    close() cancels timers and kills a running omp call."""
 
-        self.menu = tk.Menu(root, tearoff=0, bg="#1f232b", fg=FG, activebackground="#2d6cdf",
-                            activeforeground="#fff", bd=0, font=(FONT, 9))
-        self.menu.add_command(label="Refresh", command=self.refresh)
-        self.menu.add_command(label="Force refresh (re-fetch)", command=lambda: self.refresh(True))
-        self.menu.add_command(label="Open web panel", command=lambda: webbrowser.open(WEB_URL))
-        self.menu.add_separator()
-        self.menu.add_command(label="Quit", command=self.quit)
-        self.pmenu = tk.Menu(root, tearoff=0, bg="#1f232b", fg=FG, activebackground="#2d6cdf",
+    def __init__(self, parent, order=(), on_order=None, on_render=None, omp="omp", quit_cb=None):
+        self.frame = tk.Frame(parent, bg=BG)
+        self.k = parent.winfo_fpixels("1i") / 96  # 像素尺寸随 DPI 缩放
+        self.order = [p for p in order if isinstance(p, str)]
+        self.on_order, self.on_render, self.omp, self.quit_cb = on_order, on_render, omp, quit_cb
+        self.pmenu = tk.Menu(self.frame, tearoff=0, bg="#1f232b", fg=FG, activebackground="#2d6cdf",
                              activeforeground="#fff", bd=0, font=(FONT, 9))
-        self.state = load_state()
-        order = self.state.get("order")
-        self.order = [p for p in order if isinstance(p, str)] if isinstance(order, list) else []
         self.shown: list[str] = []
-
-        # Child widgets share the toplevel's bindtags, so bind once on root for full-window drag
-        root.bind("<ButtonPress-1>", self.drag_start)
-        root.bind("<B1-Motion>", self.drag_move)
-        root.bind("<ButtonRelease-1>", lambda e: self.save_state())
-        root.bind("<Button-3>", lambda e: self.menu.tk_popup(e.x_root, e.y_root))
-
+        self.cells, self.sig = [], None
         self.data, self.err, self.fetched = None, None, None
-        self.loading, self.placed = False, False
+        self.loading, self.closed = False, False
         self.result: tuple | None = None  # worker thread writes (data, err); collect() consumes
-        root.after(50, self.round_corners)
-        root.after(60, self.pin_bottom)
-        self.render()
-        self.auto_refresh()
-        root.after(TICK_MS, self.tick)
-        root.after(GUARD_MS, self.guard)
+        self._jobs: dict[str, str] = {}
+        self._procs: set = set()
+        self.frame.after_idle(self._start)
 
     def px(self, n):
         return int(round(n * self.k))
 
+    def _after(self, name, ms, fn):
+        if not self.closed:
+            self._jobs[name] = self.frame.after(ms, fn)
+
+    def _start(self):
+        self.render()
+        self.auto_refresh()
+        self._after("tick", TICK_MS, self.tick)
+
+    def close(self):
+        self.closed = True
+        for job in self._jobs.values():
+            self.frame.after_cancel(job)
+        for proc in list(self._procs):
+            if proc.poll() is None:
+                proc.kill()
+
+    def status(self):
+        """(text, tone) summary for hosts with their own header."""
+        if self.loading:
+            return "Refreshing", "busy"
+        if self.err:
+            return (self.err if len(self.err) <= 48 else self.err[:47] + "…"), "error"
+        if self.fetched:
+            return time.strftime("Remaining · %H:%M", time.localtime(self.fetched)), "ok"
+        return "", "busy"
+
     # ---------- data ----------
     def auto_refresh(self):
         self.refresh()
-        self.root.after(REFRESH_MS, self.auto_refresh)
+        self._after("auto", REFRESH_MS, self.auto_refresh)
 
     def refresh(self, invalidate=False):
-        if self.loading:
+        if self.loading or self.closed:
             return
         self.loading = True
-        self.stamp.config(text="…")
+        self._notify()
 
         def work():
-            self.result = fetch_usage(invalidate)
+            self.result = fetch_usage(invalidate, self.omp, self._procs)
 
         threading.Thread(target=work, daemon=True).start()
-        self.root.after(300, self.collect)
+        self._after("collect", 300, self.collect)
 
     def collect(self):
         if self.result is None:
-            self.root.after(300, self.collect)
+            self._after("collect", 300, self.collect)
             return
         (data, err), self.result = self.result, None
         self.loading = False
@@ -274,30 +296,36 @@ class Widget:
     def tick(self):
         if not self.loading:
             self.render()  # countdowns only
-        self.root.after(TICK_MS, self.tick)
+        self._after("tick", TICK_MS, self.tick)
+
+    def _notify(self):
+        if self.on_render and not self.closed:
+            self.on_render()
 
     # ---------- draw ----------
     def render(self):
         """Update text/bars in place while the structure is unchanged (no rebuild flicker)."""
-        self.stamp.config(text=time.strftime("%H:%M", time.localtime(self.fetched)) if self.fetched else "")
-        reports = [(r, provider_rows(r)) for r in (self.data or {}).get("reports") or []]
-        reports = ordered([(r, rows) for r, rows in reports if rows], self.order)
+        if self.closed:
+            return
+        reports = ordered(visible_quota((self.data or {}).get("reports")), self.order)
         self.shown = [r.get("provider") or "?" for r, _ in reports]
         pols = (self.data or {}).get("_policies") or []
-        sig = (tuple((r.get("provider"), (r.get("metadata") or {}).get("planType"),
+        sig = (tuple((r.get("provider"), self.account(r), (r.get("metadata") or {}).get("planType"),
                       (r.get("resetCredits") or {}).get("availableCount"), is_disabled(r, pols),
                       tuple(x["name"] for x in rows)) for r, rows in reports),
                self.err, self.data is None)
-        if sig == getattr(self, "sig", None):
+        if sig == self.sig:
             for cells, r in zip(self.cells, (x for _, rows in reports for x in rows)):
                 self.fill_row(cells, r)
+            self._notify()
             return
         self.sig, self.cells = sig, []
-        for w in self.body.winfo_children():
-            w.destroy()
+        for w in self.frame.winfo_children():
+            if w is not self.pmenu:
+                w.destroy()
         if not reports:
             msg = self.err or ("Loading…" if self.data is None else "No quota data")
-            tk.Label(self.body, text=msg, font=(FONT, 9), fg=DIM, bg=BG,
+            tk.Label(self.frame, text=msg, font=(FONT, 9), fg=DIM, bg=BG,
                      wraplength=self.px(240), justify="left").grid(row=0, column=0, sticky="w")
         line = 0
         for i, (rep, rows) in enumerate(reports):
@@ -307,25 +335,29 @@ class Widget:
                 self.cells.append(self.limit_row(r, line))
                 line += 1
         if self.err and reports:
-            tk.Label(self.body, text=self.err, font=(FONT, 8), fg=STATUS_COLOR["exhausted"], bg=BG,
+            tk.Label(self.frame, text=self.err, font=(FONT, 8), fg=STATUS_COLOR["exhausted"], bg=BG,
                      wraplength=self.px(260), justify="left").grid(
                 row=line, column=0, columnspan=4, sticky="w", pady=(self.px(6), 0))
-        self.root.update_idletasks()
-        if not self.placed:
-            self.place()
-        else:
-            self.keep_on_screen()  # height may have grown past the bottom edge
+        self._notify()
+
+    @staticmethod
+    def account(rep):
+        md = rep.get("metadata") or {}
+        return md.get("email") or md.get("accountId") or ""
 
     def header(self, rep, line, top, off=False):
-        f = tk.Frame(self.body, bg=BG)
+        f = tk.Frame(self.frame, bg=BG)
         f.grid(row=line, column=0, columnspan=4, sticky="we", pady=(top, self.px(2)))
         tk.Label(f, text=rep.get("provider") or "?", font=(FONT, 9, "bold"),
                  fg=DIM if off else ACCENT, bg=BG).pack(side="left")
+        acct = self.account(rep)
+        if acct:
+            tk.Label(f, text=acct, font=(FONT, 8), fg=DIM, bg=BG).pack(side="left", padx=(self.px(6), 0))
         plan = (rep.get("metadata") or {}).get("planType")
         if plan:
             tk.Label(f, text=plan, font=(FONT, 8), fg=DIM, bg=BG).pack(side="left", padx=(self.px(6), 0))
         if off:
-            tk.Label(f, text="停用·兜底", font=(FONT, 8), fg=DIM, bg=TRACK,
+            tk.Label(f, text="停用·兜底", font=(FONT, 8), fg="#e3b341", bg=TRACK,
                      padx=self.px(5)).pack(side="left", padx=(self.px(6), 0))
         n = (rep.get("resetCredits") or {}).get("availableCount")
         if n:
@@ -336,7 +368,7 @@ class Widget:
             w.bind("<Button-3>", lambda e, p=prov: self.provider_menu(e, p))
 
     def provider_menu(self, e, prov):
-        """Right-click on a provider header: reorder providers (saved to widget-state.json)."""
+        """Right-click on a provider header: reorder providers (persisted through on_order)."""
         i = self.shown.index(prov)
         m = self.pmenu
         m.delete(0, "end")
@@ -344,39 +376,39 @@ class Widget:
                       state="normal" if i > 0 else "disabled")
         m.add_command(label="Move down", command=lambda: self.move(prov, 1),
                       state="normal" if i < len(self.shown) - 1 else "disabled")
-        m.add_command(label="Reset order", command=self.reset_order,
+        m.add_command(label="Reset order", command=lambda: self.set_order([]),
                       state="normal" if self.order else "disabled")
         m.add_separator()
         m.add_command(label="Refresh", command=self.refresh)
-        m.add_command(label="Quit", command=self.quit)
+        if self.quit_cb:
+            m.add_command(label="Quit", command=self.quit_cb)
         m.tk_popup(e.x_root, e.y_root)
-        return "break"  # keep the window-wide menu from opening too
+        return "break"  # keep the host's window-wide menu from opening too
 
     def move(self, prov, delta):
         names = list(self.shown)
         i = names.index(prov)
         names[i], names[i + delta] = names[i + delta], names[i]
-        self.order = names
-        self.save_state()
-        self.render()
+        self.set_order(names)
 
-    def reset_order(self):
-        self.order = []
-        self.save_state()
+    def set_order(self, names):
+        self.order = names
+        if self.on_order:
+            self.on_order(names)
         self.render()
 
     def limit_row(self, r, line):
-        tk.Label(self.body, text=r["name"], font=(FONT, 9), fg=FG, bg=BG).grid(
+        tk.Label(self.frame, text=r["name"], font=(FONT, 9), fg=FG, bg=BG).grid(
             row=line, column=0, sticky="w", padx=(self.px(8), self.px(10)))
         w, h = self.px(110), self.px(6)
-        bar = tk.Canvas(self.body, width=w, height=h, bg=BG, highlightthickness=0)
+        bar = tk.Canvas(self.frame, width=w, height=h, bg=BG, highlightthickness=0)
         bar.grid(row=line, column=1)
         c = h / 2
         bar.create_line(c, c, w - c, c, width=h, capstyle="round", fill=TRACK)
         fill = bar.create_line(c, c, c, c, width=h, capstyle="round", state="hidden")
-        pct = tk.Label(self.body, font=(NUM_FONT, 9), fg=FG, bg=BG, width=4, anchor="e")
+        pct = tk.Label(self.frame, font=(NUM_FONT, 9), fg=FG, bg=BG, width=4, anchor="e")
         pct.grid(row=line, column=2, padx=(self.px(6), 0))
-        left = tk.Label(self.body, font=(FONT, 8), fg=DIM, bg=BG, width=8, anchor="e")
+        left = tk.Label(self.frame, font=(FONT, 8), fg=DIM, bg=BG, width=8, anchor="e")
         left.grid(row=line, column=3, sticky="e", padx=(self.px(8), 0))
         cells = (bar, fill, pct, left)
         self.fill_row(cells, r)
@@ -386,16 +418,78 @@ class Widget:
         bar, fill, pct, left = cells
         w, h = int(bar["width"]), int(bar["height"])
         c, frac = h / 2, r["frac"]
-        if frac is not None:
-            end = c + (w - 2 * c) * min(1.0, max(0.0, frac))
-            bar.coords(fill, c, c, max(end, c + 0.1), c)
-            # Green when plenty left, red when nearly exhausted
-            color = "#3fb950" if frac > 0.25 else ("#d29922" if frac > 0.05 else "#f85149")
-            bar.itemconfig(fill, state="normal", fill=color)
-        else:
-            bar.itemconfig(fill, state="hidden")
-        pct.config(text="—" if frac is None else f"{round(frac * 100)}%")
+        end = c + (w - 2 * c) * min(1.0, max(0.0, frac))
+        bar.coords(fill, c, c, max(end, c + 0.1), c)
+        # Green when plenty left, red when nearly exhausted
+        color = "#3fb950" if frac > 0.25 else ("#d29922" if frac > 0.05 else "#f85149")
+        bar.itemconfig(fill, state="normal", fill=color)
+        pct.config(text=f"{round(frac * 100)}%")
         left.config(text=time_left(r["resets"]))
+
+
+class Widget:
+    """Standalone shell around QuotaView: borderless desktop-level window, drag, remembered position."""
+
+    def __init__(self):
+        self.root = root = tk.Tk()
+        root.title("Model Quota")
+        root.overrideredirect(True)
+        # Desktop-level: stay beneath every app window (re-sink after any click/focus)
+        root.attributes("-alpha", 0.95)
+        root.configure(bg=EDGE)
+        self.k = root.winfo_fpixels("1i") / 96
+
+        card = tk.Frame(root, bg=BG, padx=self.px(12), pady=self.px(10))
+        card.pack(padx=1, pady=1)
+        head = tk.Frame(card, bg=BG)
+        head.pack(fill="x")
+        tk.Label(head, text="Model Quota", font=(FONT, 10, "bold"), fg=FG, bg=BG).pack(side="left")
+        close = tk.Label(head, text="×", font=(NUM_FONT, 11), fg=DIM, bg=BG, cursor="hand2")
+        close.pack(side="right", padx=(self.px(6), 0))
+        close.bind("<Button-1>", lambda e: self.quit())
+        again = tk.Label(head, text="⟳", font=(NUM_FONT, 10), fg=DIM, bg=BG, cursor="hand2")
+        again.pack(side="right", padx=(self.px(6), 0))
+        again.bind("<Button-1>", lambda e: self.view.refresh())
+        self.stamp = tk.Label(head, text="", font=(FONT, 8), fg=DIM, bg=BG, width=8, anchor="e")
+        self.stamp.pack(side="right")
+
+        self.state = load_state()
+        order = self.state.get("order")
+        self.placed = False
+        self.view = QuotaView(card, order=order if isinstance(order, list) else [],
+                              on_order=lambda names: self.save_state(), on_render=self.on_render,
+                              quit_cb=self.quit)
+        self.view.frame.pack(fill="x", pady=(self.px(4), 0))
+
+        self.menu = tk.Menu(root, tearoff=0, bg="#1f232b", fg=FG, activebackground="#2d6cdf",
+                            activeforeground="#fff", bd=0, font=(FONT, 9))
+        self.menu.add_command(label="Refresh", command=self.view.refresh)
+        self.menu.add_command(label="Force refresh (re-fetch)", command=lambda: self.view.refresh(True))
+        self.menu.add_command(label="Open web panel", command=lambda: webbrowser.open(WEB_URL))
+        self.menu.add_separator()
+        self.menu.add_command(label="Quit", command=self.quit)
+
+        # Child widgets share the toplevel's bindtags, so bind once on root for full-window drag
+        root.bind("<ButtonPress-1>", self.drag_start)
+        root.bind("<B1-Motion>", self.drag_move)
+        root.bind("<ButtonRelease-1>", lambda e: self.save_state())
+        root.bind("<Button-3>", lambda e: self.menu.tk_popup(e.x_root, e.y_root))
+        root.after(50, self.round_corners)
+        root.after(60, self.pin_bottom)
+        root.after(GUARD_MS, self.guard)
+
+    def px(self, n):
+        return int(round(n * self.k))
+
+    def on_render(self):
+        v = self.view
+        self.stamp.config(text="…" if v.loading else
+                          time.strftime("%H:%M", time.localtime(v.fetched)) if v.fetched else "")
+        self.root.update_idletasks()
+        if not self.placed:
+            self.place()
+        else:
+            self.keep_on_screen()  # height may have grown past the bottom edge
 
     # ---------- window ----------
     def round_corners(self):
@@ -479,8 +573,8 @@ class Widget:
 
     def save_state(self):
         self.state.update(x=self.root.winfo_x(), y=self.root.winfo_y())
-        if self.order:
-            self.state["order"] = self.order
+        if self.view.order:
+            self.state["order"] = self.view.order
         else:
             self.state.pop("order", None)
         try:
@@ -490,6 +584,7 @@ class Widget:
 
     def quit(self):
         self.save_state()
+        self.view.close()
         self.root.destroy()
 
 
