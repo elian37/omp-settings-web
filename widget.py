@@ -46,9 +46,9 @@ def single_instance():
     return k32.GetLastError() != 183  # ERROR_ALREADY_EXISTS
 
 
-def run_omp(args, timeout):
-    return subprocess.run(["omp", *args, "--no-extensions"], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=timeout,
+def run_omp(args, timeout, no_ext=True):
+    return subprocess.run(["omp", *args, *(["--no-extensions"] if no_ext else [])], capture_output=True,
+                          text=True, encoding="utf-8", errors="replace", timeout=timeout,
                           creationflags=NO_WINDOW)
 
 
@@ -60,10 +60,29 @@ def fetch_usage(invalidate):
     except (OSError, subprocess.TimeoutExpired) as e:
         return None, f"omp call failed: {e}"
     try:
-        return json.loads(p.stdout), None
+        data = json.loads(p.stdout)
     except json.JSONDecodeError:
         err = (p.stderr or "").strip().splitlines()
         return None, err[0] if err else "unparseable omp usage output"
+    try:  # 账号策略只用于标记「停用·兜底」，取不到就不标
+        pol = json.loads(run_omp(["config", "get", "auth.accountPolicies"], 30, no_ext=False).stdout)
+        data["_policies"] = pol if isinstance(pol, list) else []
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        data["_policies"] = []
+    return data, None
+
+
+def is_disabled(rep, policies):
+    """设置页的「停用（仅兜底）」= 该账号策略 reservePct 为 100；选择器字段须全部对上。"""
+    md = rep.get("metadata") or {}
+    for p in policies:
+        if not isinstance(p, dict) or p.get("provider") != rep.get("provider") or p.get("reservePct") != 100:
+            continue
+        acct = p.get("account") or {}
+        keys = [k for k in ("email", "accountId", "projectId", "orgId") if k in acct]
+        if keys and all(str(acct[k]).casefold() == str(md.get(k) or "").casefold() for k in keys):
+            return True
+    return False
 
 
 def win_tag(w):
@@ -264,8 +283,9 @@ class Widget:
         reports = [(r, provider_rows(r)) for r in (self.data or {}).get("reports") or []]
         reports = ordered([(r, rows) for r, rows in reports if rows], self.order)
         self.shown = [r.get("provider") or "?" for r, _ in reports]
+        pols = (self.data or {}).get("_policies") or []
         sig = (tuple((r.get("provider"), (r.get("metadata") or {}).get("planType"),
-                      (r.get("resetCredits") or {}).get("availableCount"),
+                      (r.get("resetCredits") or {}).get("availableCount"), is_disabled(r, pols),
                       tuple(x["name"] for x in rows)) for r, rows in reports),
                self.err, self.data is None)
         if sig == getattr(self, "sig", None):
@@ -281,7 +301,7 @@ class Widget:
                      wraplength=self.px(240), justify="left").grid(row=0, column=0, sticky="w")
         line = 0
         for i, (rep, rows) in enumerate(reports):
-            self.header(rep, line, top=self.px(8) if i else self.px(2))
+            self.header(rep, line, top=self.px(8) if i else self.px(2), off=is_disabled(rep, pols))
             line += 1
             for r in rows:
                 self.cells.append(self.limit_row(r, line))
@@ -296,14 +316,17 @@ class Widget:
         else:
             self.keep_on_screen()  # height may have grown past the bottom edge
 
-    def header(self, rep, line, top):
+    def header(self, rep, line, top, off=False):
         f = tk.Frame(self.body, bg=BG)
         f.grid(row=line, column=0, columnspan=4, sticky="we", pady=(top, self.px(2)))
         tk.Label(f, text=rep.get("provider") or "?", font=(FONT, 9, "bold"),
-                 fg=ACCENT, bg=BG).pack(side="left")
+                 fg=DIM if off else ACCENT, bg=BG).pack(side="left")
         plan = (rep.get("metadata") or {}).get("planType")
         if plan:
             tk.Label(f, text=plan, font=(FONT, 8), fg=DIM, bg=BG).pack(side="left", padx=(self.px(6), 0))
+        if off:
+            tk.Label(f, text="停用·兜底", font=(FONT, 8), fg=DIM, bg=TRACK,
+                     padx=self.px(5)).pack(side="left", padx=(self.px(6), 0))
         n = (rep.get("resetCredits") or {}).get("availableCount")
         if n:
             tk.Label(f, text=f"credit×{n}", font=(FONT, 8), fg="#e3b341", bg="#2b2616",
