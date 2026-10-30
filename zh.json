@@ -144,7 +144,14 @@
     "vault": "记忆库",
     "web_search": "网络搜索",
     "workspace": "工作区",
-    "worktree": "工作树"
+    "worktree": "工作树",
+    "session": "会话",
+    "out": "中途回应",
+    "archive": "只读归档",
+    "contextFiles": "上下文文件",
+    "extensionRenderers": "扩展渲染",
+    "expandThinkingBlocks": "思考块展开",
+    "shellCommandPrefix": "Shell 命令前缀"
   },
   "__groups_en": {
     "model": "Models & Generation",
@@ -291,7 +298,14 @@
     "vault": "Memory Vault",
     "web_search": "Web Search",
     "workspace": "Workspace",
-    "worktree": "Worktree"
+    "worktree": "Worktree",
+    "session": "Session",
+    "out": "Mid-task Replies",
+    "archive": "Archive",
+    "contextFiles": "Context Files",
+    "extensionRenderers": "Extension Renderers",
+    "expandThinkingBlocks": "Expand Thinking Blocks",
+    "shellCommandPrefix": "Shell Command Prefix"
   },
   "__groupmap": {
     "temperature": "模型与生成",
@@ -417,6 +431,15 @@
     "astEdit": "AST 工具",
     "astGrep": "AST 工具"
   },
+  "advisor.continueSeverity": {
+    "name": "唤醒优先级阈值",
+    "desc": "顾问在 agent 已经给出最终答复之后，要多严重的笔记才值得把 agent 重新唤醒。低于此级别的笔记只留在末尾卡片里，等你发下一条消息时才一起带给 agent。nit=仅挑剔也唤醒；concern=值得关注才唤醒；blocker=只有阻塞性问题才唤醒。可选 concern（默认）/nit/blocker。",
+    "options": [
+      "nit",
+      "concern",
+      "blocker"
+    ]
+  },
   "advisor.enabled": {
     "name": "Advisor 副顾问审查",
     "desc": "给会话配一个担任 advisor 角色的第二模型，它会被动审查主模型每个回合的工作并注入建议。默认关闭（false）。开启后每回合多一次审查调用，费用和延迟都会上升；需要先在 modelRoles 里给 advisor 角色绑定一个可用模型才会生效，也可用 /advisor on 或 --advisor 临时开启。"
@@ -456,6 +479,10 @@
       "strict"
     ]
   },
+  "archive.enabled": {
+    "name": "只读归档预读",
+    "desc": "开启 eval 的只读归档预读能力：可检索提示词历史、最近项目、过往会话与其摘要。只读，不会修改或删除任何会话。默认 true。"
+  },
   "ask.enabled": {
     "name": "ask 交互提问工具",
     "desc": "启用 ask 工具：模型拿不定主意时会弹出交互式选项菜单向你提问（例如多个方案让你选）。默认开启。关闭后模型只能自行猜测，或在回复文字里向你提问，交互体验变差。"
@@ -488,6 +515,22 @@
     "name": "后台任务数量上限",
     "desc_en": "Cap on concurrently running background/async tasks, default 100; new tasks wait for a free slot beyond it, stopping the model from sprawling unbounded background processes that would drag the machine down. Rarely needs changing.",
     "desc": "正在运行（running）的后台任务数量上限，默认 100，最小为 1；已停放（parked）或排队中的任务不占这个名额。用于防止模型无节制地铺开大量后台进程拖垮机器，一般不用改。"
+  },
+  "async.printWake": {
+    "name": "打印模式等待后台任务",
+    "desc": "打印模式（-p / --mode json）下，最后一条提示词完成后不立即退出：只要本次运行启动的后台任务还在跑，就继续留在同一会话里，每有一个结果就再起一轮。等所有任务与结果都处理完才退出。关闭时（默认 false）打印模式完成提示词后即退出并取消还在跑的后台任务。",
+    "options": [
+      "true",
+      "false"
+    ]
+  },
+  "async.widgets": {
+    "name": "后台任务实时小组件",
+    "desc": "为每个正在运行的后台任务画一张实时小组件（由该任务输出推导出的图表、进度条、状态网格），显示在等待卡片、任务胶囊和任务面板里。每个任务的小组件规格由 widget 角色（默认 smol）生成一次，之后刷新不再调用模型。默认 true。",
+    "options": [
+      "true",
+      "false"
+    ]
   },
   "auth.accountPolicies": {
     "name": "OAuth 账号使用策略",
@@ -553,6 +596,14 @@
   "bash.enabled": {
     "name": "bash 命令工具",
     "desc": "启用 bash 工具，让模型能执行 shell 命令（跑测试、构建、查系统状态等）。默认开启。关闭后模型无法执行任何命令、只能读写文件，适合只读审查等高风险场景，但日常编码基本离不开它。"
+  },
+  "bash.gitGuard": {
+    "name": "git 共享工作保护",
+    "desc": "拒绝会在仓库主检出上丢弃或移动他人共享工作的 git 命令：stash、reset --hard 或 reset 到别的提交，以及不在合并/变基冲突中时的 checkout/switch/restore。在 linked worktree 里这类命令可以执行，但会先把它们要丢弃的未提交改动存起来以便恢复。默认 false。",
+    "options": [
+      "true",
+      "false"
+    ]
   },
   "bash.patterns": {
     "name": "bash 命令审批规则",
@@ -783,6 +834,18 @@
     "name": "回合中压缩检查",
     "desc": "允许在一个长回合内部的工具循环安全边界（下一次模型请求发出前）检查压缩阈值，避免超长回合中途爆窗。默认开启。对子代理无效——子代理整个任务就是一个回合，总是检查。"
   },
+  "compaction.modelThresholds": {
+    "name": "按模型定制压缩阈值",
+    "desc": "为单个模型覆盖自动压缩的触发点。键是模型选择器（provider/model，也支持以 * 结尾的前缀匹配），值是三种写法之一：正整数 token 数（如 90000，表示以此为基础按配置的策略缩放）、固定触发点字符串（如 \"f90000\"，到点就压缩，不缩放）、百分比字符串（如 \"80%\"，即窗口的 80%）。没有匹配条目的模型回落到全局压缩策略。本项是键值表，网页只读，请手工编辑。"
+  },
+  "compaction.modelThresholdsEnabled": {
+    "name": "启用按模型压缩阈值",
+    "desc": "是否让 compaction.modelThresholds 里按模型配置的触发点生效。关闭后所有模型都只用全局压缩策略。默认 true。",
+    "options": [
+      "true",
+      "false"
+    ]
+  },
   "compaction.remoteEndpoint": {
     "name": "远程压缩端点",
     "desc_en": "Custom OpenAI-compatible remote compaction endpoint; unset by default = the current route's built-in remote compaction. Most users should keep it unset; configure only to use a separate or cheaper summarization server.",
@@ -822,6 +885,14 @@
       "off"
     ]
   },
+  "composer.predictions": {
+    "name": "预测下一条输入",
+    "desc": "每轮结束后让当前模型预测你接下来可能发什么，作为灰色幽灵文字显示在空输入框里，按 ⇥ 或 → 填入但不发送。代价是每完成一轮就多发一次计费请求（在 /stats 里可见）。默认 false。",
+    "options": [
+      "true",
+      "false"
+    ]
+  },
   "composer.recallClearedDrafts": {
     "name": "找回已清空草稿",
     "desc": "用 Ctrl+C 清空的输入草稿仍保留在本地 ↑/↓ 历史里直到会话退出，误清可以翻回来。默认 true。关闭只影响之后的清除操作，已在历史里的不受影响。"
@@ -833,6 +904,14 @@
   "composer.tokenRate": {
     "name": "实时生成速率显示",
     "desc": "在工作状态行、会话标题旁实时显示当前生成速率（tok/s）：按流式增量估算，每条消息完成时按提供商计费的输出 token 数校正。默认 false（本机已改为 true）。观察模型速度或代理质量时有用。"
+  },
+  "computer.backgroundFallback": {
+    "name": "后台操作不可用时的行为",
+    "desc": "当窗口的后台操作通道不可用时怎么办。takeover=改为前台接管执行，做完把焦点还给你的应用（macOS 上如此，其他平台就是普通前台接管）；refuse=直接拒绝，同时也不允许 agent 自己抢前台或弹 macOS 菜单。可选 takeover（默认）/refuse。",
+    "options": [
+      "takeover",
+      "refuse"
+    ]
   },
   "computer.display": {
     "name": "桌面截图显示器",
@@ -849,6 +928,10 @@
   "computer.maxWidth": {
     "name": "桌面截图最大宽",
     "desc": "拼接桌面截图的最大宽度（像素），默认 3840，超出会缩放。与 computer.maxHeight 配合限定桌面截图分辨率上限，控制图像 token 成本。"
+  },
+  "contextFiles.extra": {
+    "name": "额外上下文文件名",
+    "desc": "在 AGENTS.md 之外额外加载的指令文件名。填的是文件名列表而不是路径，例如 [\"AGENTS.local.md\"]；[] 表示不额外加载。改完需要开新会话才生效。本项是数组，网页只读，请手工编辑。"
   },
   "contextPromotion.enabled": {
     "name": "溢出升级大窗模型",
@@ -908,6 +991,10 @@
     "name": "禁用提供商/发现源",
     "desc_en": "Array of disabled model provider ids, empty by default; listed providers and their models are excluded during discovery and never appear in the model list, e.g. [\"ollama\", \"openrouter\"]. Note the array is replaced wholesale: project-level config overrides rather than merges the global array.",
     "desc": "按 id 禁用的名单，默认空；它同时管两类东西：模型提供商（如 anthropic、openai，禁用后其模型从选择器消失）和外部配置发现源（如 claude、codex、cursor，禁用后不再读它们的命令/技能/MCP 配置）。注意数组是整体替换：项目层设置会整个覆盖全局列表，写项目配置时要列全。"
+  },
+  "display.advisorCollapsedLines": {
+    "name": "折叠顾问卡片行数",
+    "desc": "顾问卡片折叠时在标题下方最多显示几行笔记。0 表示保留完整预览（默认），展开仍用工具输出折叠键。"
   },
   "display.cacheMissMarker": {
     "name": "缓存未命中标记",
@@ -1071,13 +1158,37 @@
     "name": "Exa 请求间隔",
     "desc": "两次 Exa 搜索请求之间的最小间隔毫秒数，默认 1000，用于限速避免打爆配额；设 0 关闭限速。批量搜索频繁触发限流时可调大。"
   },
+  "expandThinkingBlocks": {
+    "name": "保持思考块展开",
+    "desc": "每轮结束时不要自动折叠已完成的思考块，保持展开状态。默认 false（照常折叠）。",
+    "options": [
+      "true",
+      "false"
+    ]
+  },
   "extendedContext": {
     "name": "扩展上下文窗口",
     "desc": "在提供商支持时使用更大的上下文窗口——例如 Codex 的 gpt-6-astra/gpt-6.1-sol 从 27.2 万 token 扩到约 92.2 万输入窗口——可能触发更高的长上下文计价。默认 false，即使用标准窗口。长会话频繁爆窗且不在乎差价时开启；/extended-context on/off 可会话内切换。"
   },
+  "extensionHandlers.modeControl": {
+    "name": "允许扩展切换模式",
+    "desc": "允许扩展通过 ctx.sessionModes.set() 进入或退出 plan、vibe、goal、loop 模式。关闭只是禁止扩展切换，读取当前模式状态仍然可用。默认 true。",
+    "options": [
+      "true",
+      "false"
+    ]
+  },
   "extensionHandlers.toolCallTimeoutMs": {
     "name": "扩展工具调用超时",
     "desc": "扩展注册的 tool_call 处理器做主动工作的超时毫秒数，默认 30000；填非法值自动回退 30000，等待 omp 自有对话框的时间不计入。防止某个卡死的扩展处理器无限拖住工具调用。"
+  },
+  "extensionRenderers.assistantText": {
+    "name": "允许扩展自定义回复渲染",
+    "desc": "允许扩展改变 assistant 回复的绘制方式、就地重绘某条回复、并接收它们自己链接上的点击。会话、导出和模型上下文里保存的仍是原始文本。默认 false。",
+    "options": [
+      "true",
+      "false"
+    ]
   },
   "extensions": {
     "name": "扩展定义列表",
@@ -1123,6 +1234,14 @@
     "desc_en": "Part of session-store garbage collection: allows cleaning archive files of old sessions. Default true (inferred, undocumented upstream); the gc family controls automatic cleanup of ~/.omp session storage — turn it off if you never want omp to delete archives.",
     "desc": "`omp gc` 垃圾回收时是否执行归档清理：把超过 coldArchiveAfterDays 天的会话归档标记为可回收并清除。默认 true。这是 omp 会话存储的磁盘维护功能；不想让 gc 动归档文件就关掉。"
   },
+  "gc.autoCompress": {
+    "name": "自动压缩旧会话",
+    "desc": "交互式启动时最多每天一次，在后台静默跑一次 omp gc --compress --apply，让闲置会话的文件被自动压缩。默认 false（不自动做）。",
+    "options": [
+      "true",
+      "false"
+    ]
+  },
   "gc.blobs": {
     "name": "GC 清理孤儿 blob",
     "desc_en": "Garbage-collect blobs (attachments, binary artifacts, etc.) no longer referenced by any session. Default true (inferred, undocumented upstream); the main source of reclaimed disk space — beware if external scripts reference those blob files directly.",
@@ -1132,6 +1251,18 @@
     "name": "冷归档天数",
     "desc_en": "Sessions archived longer than this many days (default 30) move to cold archive and become reclaimable by the cleanup flow (inferred, undocumented upstream); larger keeps them around longer, smaller frees disk sooner.",
     "desc": "会话归档存放超过这个天数（默认 30）后被当作冷归档，进入可清理范围。仅 gc.archive 开启时生效；调大保留更久，调小更快释放磁盘。"
+  },
+  "gc.compress": {
+    "name": "压缩冷会话文件",
+    "desc": "对冷会话文件就地使用文件系统的透明压缩（APFS、NTFS 支持）。因为会改写用户可见文件，默认 false，需要显式开启。",
+    "options": [
+      "true",
+      "false"
+    ]
+  },
+  "gc.compressAfterDays": {
+    "name": "冷会话压缩阈值（天）",
+    "desc": "会话文件多少天没被访问后算作「冷」，纳入压缩范围。默认 7 天。"
   },
   "gc.retainNewestGlobal": {
     "name": "全局保留会话数",
@@ -1536,6 +1667,10 @@
     "name": "语言服务器懒启动",
     "desc": "语言服务器在首次使用时（调用 lsp 工具或编辑匹配类型的文件）才启动，而不是会话启动时全量拉起。默认 true，省内存省启动时间；首次使用某语言时会有少量等待。"
   },
+  "lsp.requestTimeout": {
+    "name": "LSP 请求超时（秒）",
+    "desc": "agent 没有指定超时时，等待语言服务器给出诊断、悬停等回答的秒数；编辑后产生的迟到诊断至少等这么久。冷启动慢的服务器可以调大。lsp 工具自己的 timeout 参数仍可单次覆盖。默认 10 秒。"
+  },
   "lsp.shared": {
     "name": "语言服务器共享",
     "desc": "经 daemon broker 让多个 omp 实例共享同一项目的同一个语言服务器（共享不可用时自动退回各自私有实例）。默认 true，显著降低多窗口并行时的内存占用。"
@@ -1852,6 +1987,14 @@
     "name": "完全省略思考摘要",
     "desc": "要求支持的供应商在响应里完全不返回思考摘要（不只是界面上不显示）。省上下文和流量，但模型也失去跨轮参考自己思考的载体，推理能力略有损失；不支持的供应商设置无效。默认 false。只想眼不见为净请用 hideThinkingBlock 而不是这个。"
   },
+  "out.enabled": {
+    "name": "允许中途回应",
+    "desc": "允许 agent 在任务没结束时通过写 out:// 先给你一段回复，像正常回复一样显示，但不结束当前回合（流式输出上限 64 KiB）。留空时：交互式 TUI 默认开，打印模式、RPC、ACP 会话默认关。",
+    "options": [
+      "true",
+      "false"
+    ]
+  },
   "paste.largeMenuThreshold": {
     "name": "大粘贴菜单阈值",
     "desc": "粘贴超过这个行数时弹出菜单，可选「包成代码块 / 包成 XML 标签 / 存成文件」。0=禁用菜单（大粘贴仍会折叠为 [Paste] 标记不占屏）。调大减少打扰，调小更早给整理选项。默认 100。"
@@ -1896,9 +2039,30 @@
     "name": "存在惩罚",
     "desc": "对已经出现过的 token 再出现施加惩罚，降低复读、鼓励新内容；过高会让模型用词漂移、代码符号残缺。-1=用供应商默认（默认值），其余值按各 API 语义原样传递。只在与 temperature 等采样参数联调时才需要动。"
   },
+  "prewalk.auto": {
+    "name": "自动预走（prewalk）判断",
+    "desc": "让 judge 角色解析出的原生评审模型判断：每个新的顶层用户任务是否值得先把困难推理前置。需要可用的原生 judge，没有就什么都不分类。与「启用 Prewalk」相互独立。可选 off（默认）/suggest/on。",
+    "options": [
+      "off",
+      "suggest",
+      "on"
+    ]
+  },
+  "prewalk.autoTarget": {
+    "name": "自动 Prewalk 交接目标",
+    "desc": "自动 prewalk 在第一次编辑/写入时交接给哪个模型或角色。默认 @smol。"
+  },
   "prewalk.enabled": {
     "name": "预走交接",
     "desc": "会话先用主力模型开工：在计划提示的待办清单建好后的首次编辑/写入时，交棒给快而便宜的角色（默认 smol）继续干活——强模型负责规划并起头，便宜模型负责实施。省钱利器，代价是实施质量取决于接棒模型。可用 --prewalk/--no-prewalk 按会话覆盖。默认 false。"
+  },
+  "prewalk.from": {
+    "name": "Prewalk 起始模型",
+    "desc": "/prewalk restart 回到哪个模型或角色重新做规划。默认 @default。"
+  },
+  "prewalk.into": {
+    "name": "Prewalk 交接目标",
+    "desc": "prewalk 在第一次编辑/写入时交接给哪个模型或角色：作用于 /prewalk、/prewalk restart、启用 Prewalk 以及 --prewalk。自动 prewalk 用自己的目标（见 prewalk.autoTarget）。默认 @smol。"
   },
   "proseOnlyThinking": {
     "name": "思考摘要去代码",
@@ -1996,22 +2160,17 @@
     "name": "供应商并发上限",
     "desc": "按供应商 ID（如 \"anthropic\"、\"openai\"）限制同时在飞的 LLM 请求数，形如 {\"anthropic\": 4}；该限制在使用同一配置根的多个本地 omp 进程之间共享。未列出的供应商不受限。怕被限流或自建网关扛不住时配置。默认空对象=全部不限。"
   },
+  "providers.muse-code.storeResponses": {
+    "name": "Muse Code 服务端存结果",
+    "desc": "把 Muse Code 的结果存到 Meta 的服务器上，这样某轮连接中断时可以直接取回结果而不必重跑。代价是这些运行的提示词与输出会留存在 Meta 一侧。默认 false。",
+    "options": [
+      "true",
+      "false"
+    ]
+  },
   "providers.ollama-cloud.maxConcurrency": {
     "name": "Ollama Cloud 并发上限",
     "desc": "每个 omp 进程内 Ollama Cloud 子代理允许同时跑多少个。0=取消这个专属限制（仍受全局并发约束）。调小对 Ollama Cloud 更温和、不易触发限流；调大并行更快。默认 3。"
-  },
-  "providers.openai-codex.codeMode": {
-    "name": "Codex Code 模式",
-    "desc": "把 Codex 的 code_mode_only 模型（GPT-5.6）路由进 eval：这些模型的直连工具只有 eval、ask、todo、yield、think、checkpoint、rewind，其余会话工具都通过 eval 单元调用（镜像 codex-rs 的 Code Mode）。off=关闭（默认）；on=强制；auto=跟随模型目录标记。",
-    "options": [
-      "off",
-      "on",
-      "auto"
-    ]
-  },
-  "providers.openai-codex.codeModeDirectTools": {
-    "name": "Code 模式直连工具",
-    "desc": "Codex Code Mode 下额外允许直连（不经过 eval）的工具名列表。标准直连工具已含 eval、ask、todo、yield、think、checkpoint、rewind，这里追加更多。仅在使用 code_mode_only 模型时有意义。默认空数组。"
   },
   "providers.openaiLiveSteering": {
     "name": "OpenAI 流中插话",
@@ -2176,6 +2335,15 @@
     "name": "回退链配置",
     "desc": "JSON 对象：把模型角色（如 \"default\"）、模型选择器（\"provider/model\"）或通配符（\"provider/*\"）映射到一串有序的回退选择器，例如 {\"default\":[\"openai/gpt-4o-mini\"]}。主模型失败时按列表顺序切换。条目可带思考档后缀（:low/:high/:max/:off），不带就继承失败轮的思考档。这是可用性和费用的兜底配置，默认空。"
   },
+  "retry.fallbackOn": {
+    "name": "回退触发条件",
+    "desc": "哪些失败请求允许切换到 retry.fallbackChains 里配置的回退模型。any=任何失败都允许（默认）；usage-limit=只有额度/限流类失败才切换；except-usage-limit=除了额度类失败，其他都切换。",
+    "options": [
+      "any",
+      "usage-limit",
+      "except-usage-limit"
+    ]
+  },
   "retry.fallbackRevertPolicy": {
     "name": "回退返回策略",
     "desc": "切到回退模型后什么时候切回主模型：cooldown-expiry=主模型冷却期一结束就回来（默认）；never=本会话就留在回退模型上不再自动切回。回退模型更稳但更贵/更弱时用 cooldown-expiry。",
@@ -2195,6 +2363,14 @@
   "retry.modelFallback": {
     "name": "模型回退开关",
     "desc": "允许重试恢复时切换到已配置的回退模型（retry.fallbackChains 里的条目）。关闭则只重试原模型、不换型号——结果一致性更好但可用性下降。默认 true。"
+  },
+  "retry.rateLimitWalksChain": {
+    "name": "限流时跳过思考签名轮",
+    "desc": "遇到限流时，不要因为该轮的思考内容带有失败模型的签名而卡住整条 fallbackChains 的推进。关闭时（默认 false）这种轮会一直重试被限流的模型，直到 retry.maxRetries 用尽才轮到回退链。",
+    "options": [
+      "true",
+      "false"
+    ]
   },
   "retry.usageAwareFallback": {
     "name": "额度感知回退",
@@ -2264,6 +2440,22 @@
     "name": "安全扫描",
     "desc": "启用 omp 原生安全扫描的规划与执行，以及只读的 security:// 资源命名空间，做安全审计/漏洞盘点类任务时用。日常开发用不到可关。默认 false。"
   },
+  "session.maxCost": {
+    "name": "会话花费硬上限（美元）",
+    "desc": "整个会话树（含子代理）的花费达到该金额后，omp 停止再发送模型请求。必须是正数美元金额。留空表示不限制；命令行 --max-cost 可单次覆盖。"
+  },
+  "session.warnCost": {
+    "name": "会话花费预警（美元）",
+    "desc": "整个会话树（含子代理）的花费达到该金额时，omp 警告一次（默认只在第一次超支时提示）。必须是正数美元金额。留空表示不预警；命令行 --warn-cost 可单次覆盖。"
+  },
+  "session.worktreeScope": {
+    "name": "恢复列表的目录范围",
+    "desc": "恢复（resume）选择器里「当前目录」是否包含同一仓库其他 linked worktree 里的会话。repo=包含整个仓库（默认）；directory=只看这一个目录。",
+    "options": [
+      "directory",
+      "repo"
+    ]
+  },
   "setupVersion": {
     "name": "设置向导版本",
     "desc_en": "Internal state recording which version of the initial setup flow you have completed; with startup.setupWizard on, newly added onboarding steps are shown once per version bump. Editing by hand is meaningless — leave it alone. Default 0 (this machine shows 2 = second-version onboarding completed).",
@@ -2295,9 +2487,17 @@
     "desc_en": "Minimum interval in minutes between Sharpshooter consolidations: within the interval, consolidation is skipped (not_due) and queued decision deltas merge into the memory files next round. Default 5; larger saves calls but delays memory updates.",
     "desc": "Sharpshooter 把新捕获的决策增量合并进记忆文件的最小间隔分钟数；距上次整合不足这个间隔就跳过，排队的增量下一轮再并入。默认 5。调大更省但记忆更新更迟。"
   },
+  "sharpshooter.minPromptLength": {
+    "name": "Sharpshooter 最短提示长度",
+    "desc": "提示词短于这个字符数时不做 Sharpshooter 抽取/固化，避免为极短输入浪费一次模型调用。默认 16。"
+  },
   "sharpshooter.model": {
     "name": "Sharpshooter 抽取模型",
     "desc": "Sharpshooter 做决策抽取/整合用的模型选择器（从对话里识别架构/产品/风格决策、被否决的方案、纠正等写入记忆文件）。留空用 smol 角色（默认）；想提高决策抽取质量可指定更强模型，代价是更费 token。"
+  },
+  "shellCommandPrefix": {
+    "name": "旧版 Shell 命令前缀",
+    "desc": "转发给旧式扩展用的 pi shell 命令前缀。omp 自带的原生 shell 不应用它。默认未设置。"
   },
   "shellMinimizer.enabled": {
     "name": "Shell 输出压缩",
@@ -2465,6 +2665,10 @@
       "assistant",
       "yield"
     ]
+  },
+  "speech.speed": {
+    "name": "朗读语速",
+    "desc": "朗读 assistant 输出时的语速，1 为正常，取值范围被夹到 0.5–2.5。默认 1。"
   },
   "speech.voice": {
     "name": "朗读声线",
@@ -2643,6 +2847,10 @@
       "ascii"
     ]
   },
+  "task.agentAccountPools": {
+    "name": "子代理账号池",
+    "desc": "为指定 agent 指定可用的账号池（按 provider 分组），让它的子代理只在给定账号上跑。键是 agent 名，值是账号池配置。本项是键值表，网页只读，请手工编辑。"
+  },
   "task.agentAdvisor": {
     "name": "按代理 Advisor 覆盖",
     "desc_en": "Per-agent (agent id) overrides of advisor (advisory review) configuration, shaped like {\"<agent>\": {...}}; enable or configure advisor review for one subagent without touching global settings. Empty object by default = follow global.",
@@ -2672,13 +2880,21 @@
     "desc_en": "Per-agent overrides of the service tier, e.g. let a critical subagent use the priority tier while the rest stay standard. Empty object by default = inherit the main agent / global tier setting.",
     "desc": "按子代理名单独覆盖它的服务档（service tier），让关键子代理用 priority 档、其余用标准档。默认空对象=继承主代理/全局 tier 设置。"
   },
+  "task.agentSoftRequestBudget": {
+    "name": "子代理请求软预算",
+    "desc": "每个子代理每次运行最多发多少个 assistant 请求。越过预算时注入一条收尾提示要求尽快结束；到 1.5 倍预算强制停止并交回已有结论。0 表示不限制。键是 agent 名，值为请求数；内置 scout/sonic 有更低的内建上限，配置更低时仍对它们生效。本项是键值表，网页只读，请手工编辑。"
+  },
   "task.batch": {
     "name": "批量派发模式",
     "desc": "task 工具用批量形态：一次调用携带 { context, tasks[] }，每项一个子代理，共享的 context 会前置注入每个任务；async.enabled 开启时各子代理作为独立后台任务跑。关闭则退回一次只派一个代理的扁平模式。默认 true。"
   },
-  "task.completionProbeMs": {
-    "name": "完成度探测间隔",
-    "desc": "每隔多少毫秒用一次缓存的旁路请求（类似 /btw）问还在跑的子代理「完成度估计」，估计值显示在 wait 和 task 视图的子代理旁边。默认 120000（2 分钟）。0=关闭。调小进度汇报更勤但每次探测多花一点 token；调大更省但状态滞后。"
+  "task.completionProbe": {
+    "name": "子代理完成度探测",
+    "desc": "对正在干活的子代理，用类似 /btw 的缓存旁路请求让它估计任务完成度：在再跑 2、5、10、30 分钟各问一次，之后每小时一次。估计结果显示在 wait 与 task 视图里子代理旁边。只探测交互式会话主 agent 派出的子代理；打印模式、RPC、ACP、SDK 运行永不探测。默认 true。",
+    "options": [
+      "true",
+      "false"
+    ]
   },
   "task.disabledAgents": {
     "name": "禁用代理名单",
@@ -2701,6 +2917,14 @@
   "task.enableLsp": {
     "name": "子代理可用 LSP",
     "desc": "允许 task 派发的子代理使用 lsp 工具（定义跳转、引用查找、诊断等代码智能）。默认关闭以让子代理更省 token；需要 LSP 级代码情报的委派任务再打开。默认 false。"
+  },
+  "task.file": {
+    "name": "子代理指令从文件读",
+    "desc": "允许 task 工具从文件读取子代理指令（taskFile），并把该文件路径与 SHA-256 记入会话。默认 false。",
+    "options": [
+      "true",
+      "false"
+    ]
   },
   "task.isolation.apply": {
     "name": "隔离结果自动应用",
@@ -2770,6 +2994,14 @@
     "name": "批量投机启动",
     "desc": "批量派发时某个 tasks[] 条目流式解析完就立即启动对应子代理，不等整批解析完——并行度更高、启动更快。若这个调用最终校验失败/被拦截/参数变化，已启动的代理会被中止。要求 task 审批已自动放行、且没有扩展工具生命周期钩子。默认 true。"
   },
+  "task.structured": {
+    "name": "结构化子代理结果",
+    "desc": "在 task 工具上开放 outputSchema/schemaMode，并让子代理通过 yield 工具返回结果，按调用方或 agent 定义里的输出 schema 校验。关闭时 task 子代理没有 yield 工具，直接把最终消息当纯文本返回（除非该 agent 定义写死了 structured: true）。eval 的 agent()/workpool 派发始终保留结构化结果。默认 false。",
+    "options": [
+      "true",
+      "false"
+    ]
+  },
   "tasks.todoClearDelay": {
     "name": "清单清除延迟",
     "desc": "已完成或已放弃的待办在 todo 组件里保留多少秒再移除，留个「刚做完了什么」的可视尾巴。默认 60。"
@@ -2781,6 +3013,14 @@
   "temperature": {
     "name": "采样温度",
     "desc": "控制模型输出的随机性：0=接近确定性输出，1=更有创造性。-1=用供应商默认（默认值）。编码任务通常不用动；写文案想发散可以略调高，过高会伤代码正确性。仅对支持该参数的模型生效。"
+  },
+  "terminal.programStatus": {
+    "name": "终端程序状态上报",
+    "desc": "通过 OSC 7501 上报 agent 当前是「在干活」「在等你」「已完成」还是「失败」，供终端标签页指示灯和 agent inbox 使用。默认 true。",
+    "options": [
+      "true",
+      "false"
+    ]
   },
   "terminal.showImages": {
     "name": "终端内联图片",
@@ -2895,6 +3135,23 @@
       "ultrafast"
     ]
   },
+  "title.generator": {
+    "name": "会话标题生成器",
+    "desc": "用什么给你的消息生成未命名会话的标题。fork=由当前会话模型顺手生成（默认）；tiny=交给 tiny 角色的小模型生成，更快更省。",
+    "options": [
+      "fork",
+      "tiny"
+    ]
+  },
+  "title.icons": {
+    "name": "会话标题图标",
+    "desc": "自动生成或 /rename 的会话标题前面用什么图标与短码。nf+emoji=Nerd Font 图标加 emoji（默认，需要 Nerd Font）；emoji=只用 emoji；boring=纯文本短码，任何字体都不乱码。",
+    "options": [
+      "nf+emoji",
+      "emoji",
+      "boring"
+    ]
+  },
   "title.refreshOnReplan": {
     "name": "改计划刷新标题",
     "desc": "todo init 重新规划后自动刷新已生成的会话标题；你自己手动设过的标题不会被覆盖。让标题贴合最新任务方向。默认 true。"
@@ -2930,9 +3187,10 @@
   },
   "tools.approvalMode": {
     "name": "工具审批模式",
-    "desc": "工具调用的默认审批行为：always-ask=只自动放行只读工具、其余每次确认；write=自动放行读和工作区写入工具；yolo=全部自动放行（你在 tools.approval 里配的规则仍可拦）。yolo 配合隐藏工具活动等于不看不问，风险自担。默认 yolo。",
+    "desc": "工具调用的默认审批行为：always-ask=只自动放行只读工具，其余每次确认；always-ask-cached（「先问再记住」）=连文件读取也要先问，但问到后可以记住这个文件或这个目录，本会话或跨会话生效（可用 /forget-approvals 清空记住的授权）；write=自动放行读和工作区写入工具；yolo=全部自动放行（你在 tools.approval 里配的规则仍可拦，tools.restrictedFolders 也仍然强制询问）。yolo 配合隐藏工具活动等于不看不问，风险自担。默认 yolo。",
     "options": [
       "always-ask",
+      "always-ask-cached",
       "write",
       "yolo"
     ]
@@ -2988,6 +3246,10 @@
     "name": "输出单行上限",
     "desc": "流式工具输出（bash/python/js eval）和 read 的单行字节上限：超宽行用省略号截断，到下一个换行为止的剩余字节直接丢弃。0=不限。默认 768。防止单行超长内容（压缩 JS、base64 之类）撑爆上下文。"
   },
+  "tools.restrictedFolders": {
+    "name": "受限目录",
+    "desc": "这些目录里的每一次读、写、编辑、搜索或命令都必须显式批准，无论当前审批模式是什么、也无论之前记住过什么授权（yolo 模式同样拦）。目录本身及其下所有内容都受限，命令按它实际运行的目录来匹配。填 JSON 路径列表，例如 [\"~/secrets\"]。本项是数组，网页只读，请手工编辑。"
+  },
   "tools.speculativeExecution.enabled": {
     "name": "投机执行",
     "desc": "启用「可安全丢弃的首切片」：正式派发前通过直接 read 调用和嵌套 eval 先跑验证过的本地只读操作，结果不对就丢弃、不影响主流程。网络请求、供应商生成和真实文件写入不在此范围。默认 false。"
@@ -3013,6 +3275,14 @@
     "name": "指定内联设备",
     "desc": "当 tools.xdevDocs 选 builtins 时，名字匹配这些 glob 模式的动态设备强制内联其文档（例如 mcp__context_mode_*）。catalog 模式忽略此项。常驻使用的 MCP 工具想免按需读取就配这里。默认空数组。"
   },
+  "tools.xdevNotices": {
+    "name": "MCP 挂载提示",
+    "desc": "当 MCP 或扩展的工具被挂上/卸下时，显示一条 `xd://: mounted …` 提示。模型仍然会在下一条提示词里得知这些变化。关闭它不必打开 startup.quiet。默认 true。",
+    "options": [
+      "true",
+      "false"
+    ]
+  },
   "topK": {
     "name": "Top-K 采样",
     "desc": "只在概率最高的 K 个 token 里采样，K 越小输出越保守。-1=用供应商默认（默认值）。仅对支持该参数的后端生效，编码场景一般不动。"
@@ -3031,6 +3301,10 @@
       "labeled-only",
       "all"
     ]
+  },
+  "tts.localSpeed": {
+    "name": "本地 TTS 语速",
+    "desc": "本地 TTS 后端（tts 工具、omp say）的朗读语速，1 为正常，取值范围被夹到 0.5–2.5。默认 1。"
   },
   "tts.localVoice": {
     "name": "本地 TTS 声线",
@@ -3101,9 +3375,27 @@
       "after-gap"
     ]
   },
+  "tui.autoGraph": {
+    "name": "数字表格自动配图",
+    "desc": "在显示图形的终端上，给 agent 回答里的数字表格下面自动画一张图（用你主题的配色）。auto=有原生 TypeSafe judge 就用它精修、否则用内置估算（默认）；smart=用 judge 判断是否适合画图；always=总是画；off=不画。",
+    "options": [
+      "auto",
+      "smart",
+      "always",
+      "off"
+    ]
+  },
   "tui.codexResetFireworks": {
     "name": "Codex 重置烟花",
     "desc": "Codex 周用量意外重置、或新攒下的保留重置额度入账时，在屏幕上三分之一区域放一场烟花庆祝，按 ⎋ 消散。纯娱乐开关。默认 false。"
+  },
+  "tui.completeScrollback": {
+    "name": "HUD 占位直推回溯区",
+    "desc": "把被不断变高的 HUD 或对话框顶出屏幕的正文行直接送进终端回溯区（scrollback），而不是让它们暂留在可视区。HUD 变矮时会留下空行，直到新输出把它填满。默认 false。",
+    "options": [
+      "true",
+      "false"
+    ]
   },
   "tui.hyperlinks": {
     "name": "OSC8 超链接",
@@ -3144,6 +3436,14 @@
   "tui.renderMermaid": {
     "name": "Mermaid 渲染",
     "desc": "把回复里的 mermaid 代码块渲染成 ASCII 示意图（终端显示不了真图时的替代），流程/架构一眼可读；想看原始代码可关。默认 true。"
+  },
+  "tui.renderSvg": {
+    "name": "邀请 agent 画 SVG",
+    "desc": "提示 agent 可以用 SVG 画示意图与图表，在支持图形的终端里内联渲染成图片。默认 true。",
+    "options": [
+      "true",
+      "false"
+    ]
   },
   "tui.resizeScrollback": {
     "name": "窗口重排回滚",
@@ -3220,5 +3520,23 @@
   "worktree.clone": {
     "name": "工作树写时克隆",
     "desc": "github pr_checkout 或 bash 里的 git worktree add 新建工作树时，先对当前检出做写时复制（copy-on-write）克隆，让 node_modules、target 等被忽略的构建产物直接带过去、省去重装；文件系统不支持克隆则回退普通检出。默认 true。"
+  },
+  "worktree.onExit": {
+    "name": "退出时处理工作树",
+    "desc": "退出时怎么处理自本次 omp 启动以来创建的工作树（启动时创建或 /wt 创建）。keep=保留（默认）；ask=询问；remove=删除。",
+    "options": [
+      "keep",
+      "ask",
+      "remove"
+    ]
+  },
+  "worktree.onStart": {
+    "name": "启动时新建工作树",
+    "desc": "新的交互式会话是否直接在一个新建的 linked worktree 里开始。off=不新建（默认）；ask=每次询问；create=直接新建。",
+    "options": [
+      "off",
+      "ask",
+      "create"
+    ]
   }
 }

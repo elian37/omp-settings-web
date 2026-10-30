@@ -104,7 +104,48 @@ def yaml_scalar(s):
     return json.dumps(s, ensure_ascii=False)
 
 
-def coerce_value(typ, s):
+def load_zh():
+    try:
+        return json.loads((HERE / "zh.json").read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+_ENUM_LINE = re.compile(
+    r'^\s+([A-Za-z0-9_.\-]+)\s*=\s*\S*\s*\(([^)]*\|[^)]*)\)\s*$')
+
+
+def enum_options_from_omp():
+    """从 `omp config list` 文本输出的 `key = value (a|b|c)` 解析真实值域。
+
+    `--json` 只给 type/value/description，不含枚举合法值；文本输出才有。
+    zh.json 的 options 可能落后于 omp（新增枚举值时），这里是权威兜底。
+    """
+    out = {}
+    for line in run(["omp", "config", "list"]).splitlines():
+        m = _ENUM_LINE.match(line)
+        if m:
+            out[m.group(1)] = m.group(2).split('|')
+    return out
+
+
+def enum_options(key, zh=None):
+    """某一 enum 项的合法值：zh.json 优先，缺失时问 omp 本身。"""
+    opts = ((zh if zh is not None else load_zh()).get(key) or {}).get('options')
+    if opts:
+        return list(opts)
+    return enum_options_from_omp().get(key) or []
+
+
+def coerce_value(typ, s, options=None):
+    """把页面提交的字符串转成 config.yml 里的字面量。
+
+    options 是 enum 项的合法值列表（来自 zh.json）。omp 对 config.yml 里的
+    非法枚举/布尔值不报错，而是静默回落默认值（实测：写入
+    `display.showTurnTime: bogusXyz` 后 `omp config get` 返回 false，
+    文件里却留着 bogusXyz）。所以这里必须自己拦，否则页面写进非法值后
+    文件内容与生效值不一致、且没有任何提示。
+    """
     s = s.strip()
     if typ == 'boolean':
         low = s.lower()
@@ -116,6 +157,11 @@ def coerce_value(typ, s):
     if typ in ('number', 'integer'):
         if re.fullmatch(r'-?\d+(\.\d+)?([eE][-+]?\d+)?', s) is None:
             raise ValueError('该项要求数字')
+        return s
+    if typ == 'enum' and options:
+        if s not in options:
+            raise ValueError(
+                f'该项只接受这些值之一：{", ".join(options)}（收到 {s!r}）')
         return s
     if s == '':
         raise ValueError('空值请用 null 表示')
@@ -905,15 +951,21 @@ def list_settings():
         return {"error": "omp config list --json 解析失败", "items": []}
     raw = CONFIG.read_bytes().decode('utf-8')
     idx = index_config(raw.splitlines(keepends=True))
-    try:
-        zh = json.loads((HERE / "zh.json").read_text(encoding='utf-8'))
-    except (OSError, json.JSONDecodeError):
-        zh = {}
+    zh = load_zh()
     groups = zh.get("__groups", {})
+    # zh.json 没写 options 的 enum 项，用 omp 文本输出的真实值域兜底，
+    # 免得页面把枚举渲染成自由文本框、写进非法值后被 omp 静默丢弃。
+    fallback = None
+    if any(m.get('type') == 'enum' and not (zh.get(k) or {}).get('options')
+           for k, m in catalog.items()):
+        fallback = enum_options_from_omp()
     items = []
     for key, meta in catalog.items():
         typ = meta.get('type', 'string')
         info = zh.get(key, {})
+        opts = info.get('options')
+        if typ == 'enum' and not opts and fallback:
+            opts = fallback.get(key)
         items.append({
             "key": key,
             "value": meta.get('value'),
@@ -922,7 +974,7 @@ def list_settings():
             "name": info.get('name'),
             "zh": info.get('desc'),
             "desc_en": info.get('desc_en'),
-            "options": info.get('options'),
+            "options": opts,
             "group": groups.get(key.split('.')[0], key.split('.')[0]),
             "custom": key in idx,
             "editable": typ in EDITABLE_TYPES,
@@ -1736,7 +1788,8 @@ class Handler(BaseHTTPRequestHandler):
         if meta.get('type') not in EDITABLE_TYPES:
             return f'类型 {meta.get("type")} 不支持在线编辑'
         try:
-            formatted = coerce_value(meta['type'], str(payload.get("value", "")))
+            formatted = coerce_value(meta['type'], str(payload.get("value", "")),
+                                     enum_options(key))
         except ValueError as e:
             return str(e)
         return set_config_key(key, formatted)

@@ -683,7 +683,10 @@ function roleRow(role, value) {
 
 /* ---------- 故障兜底（retry.fallbackChains） ---------- */
 const fb = { data: null, err: null, roles: [] };
-const FB_THINK = ['', 'low', 'medium', 'high', 'xhigh', 'max', 'off'];
+// 与 omp 的思考档选择器一致（server.py 的 _THINKING 同一集合）：
+// inherit 表示沿用上一级选择器，off 关闭，auto 交给自动判定。
+const FB_THINK = ['', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max',
+                  'auto', 'off', 'inherit'];
 const FB_KIND = { // 模型种类角色：用自己的链，不走 default
   image: 1, web: 1, speech: 1, dictation: 1, judge: 1, memory: 1 };
 
