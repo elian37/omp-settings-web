@@ -46,6 +46,9 @@
 **Model visibility**
 
 - Choose which models appear in omp's `/model` picker, Ctrl+P cycling and this page's role dropdowns — per model or per provider, with search. Hidden models are **not disabled**: roles already assigned to them keep working. Writes `enabledModels` in `config.yml` (backed up, live-reloaded by omp); fully selected providers collapse to `provider/*`, the default role's model is pinned first and always shown, and patterns matching no current model (offline providers) are preserved.
+- Every provider group header in **Model visibility** carries a **Delete provider** button when that provider is defined under `providers` in the local `models.yml` (or `models.yaml`). Providers defined there but absent from omp's catalog (empty providers) still get a group so they can be removed; blocks holding only `modelOverrides` are built-in overrides and show a tag instead of a button. The API returns names, model ids and the config references that would be cleared — never `baseUrl`, `apiKey` or `headers`.
+- **Delete provider** removes that block (deeper-indented comments inside it go with it; comments at the providers' key indent belong to the next provider and stay) and clears every reference to it **in the same transaction**, but only inside the config fields omp actually treats as model selectors: `modelRoles.*`, `retry.fallbackChains` (both keys and values), `enabledModels` (block list and flow form), `task.agentModelOverrides.*`, `modelPresets.*.modelRoles.*`, `sharpshooter.model` and `edit.modelVariants.*`. Every other field — paths, URLs, `bash.patterns`, arbitrary nested flow config — is left byte-identical and never disables deletion. Only **block-style** config is rewritten: scalar selector values (including comma lists) under `modelRoles`, `modelPresets.*.modelRoles` and `task.agentModelOverrides`; block keys and block list items under `retry.fallbackChains`; and block list items under `enabledModels`. Within such a value only the candidates that belong to that provider are dropped; a role or chain left with nothing is removed, and `modelRoles`/`fallbackChains`/`agentModelOverrides`/`modelPresets` collapse to `{}` while `enabledModels` collapses to `[]`. Any **flow container** (`{…}` / `[…]`) is never rewritten. Inside the model-related top-level blocks (`modelRoles`, `retry`, `task`, `modelPresets`, `enabledModels`, `sharpshooter`, `edit`) and at any depth, a line whose value starts with `{` or `[` is refused as `unsupported` whenever its text mentions this provider name or one of its declared model ids on a word boundary — a deliberately conservative text check that may over-block but never under-blocks. **Multi-line** flow containers are tracked as regions — and a region can only start on a line whose *value* (after `key:` or a list item's `-`) begins with `{` or `[`, so brackets inside plain strings (`match: echo [`) or block-scalar bodies (`description: |`) never swallow the lines that follow: from the line that opens the `{`/`[` until it closes (quote- and comment-aware), the whole span is one flow value, so no line inside it ever becomes a rewrite operation, and if any line in the span mentions the provider or a declared model id the deletion is refused with the container's own path in the reason. The reason names the location and asks for block style. Flow that mentions neither is left alone and does not block. A bare model id is cleared only when this provider is its *only* source in omp's **full** catalog (`omp models --kind all`, so image/tts/stt/judge/search models count as providers too — omp resolves duplicate ids with `pickPreferredModel()`), so shared ids keep working. When a bare id would need that judgement but the catalog cannot be read (omp missing, non-zero exit, unparsable output or an empty list), deletion is refused with `unavailable` and the button is disabled — the page never guesses an owner and writes nothing. Trailing comments, indentation and line endings of rewritten lines are preserved; only the value span is replaced. References are never a reason to refuse; the confirmation dialog lists every location with its current and resulting value, and warns when the visibility list would end up empty (an empty list makes omp show every model). A selector shape that cannot be rewritten byte-exactly is reported as `unsupported` and the button is disabled with that reason. Both files are backed up to `<name>.bak-settings-web-<stamp>` **before** anything is replaced; a failure restores from those backups, and if restoration itself fails the response is an honest partial (HTTP 500) naming the unrestored files and the backup paths to restore by hand. The request carries the SHA-256 of `models.yml` **and** of the `config.yml` the dialog was built from, so a view that no longer matches disk is rejected (stale) instead of silently clearing references the user never saw.
+- Each model has a **Test** button: reuse omp's signed-in credentials for one real short `omp bench` request to that exact model (thinking requested off, 256-token output limit, no fallback chain). Shows success/failure, total time, first-token and model-request timing, with expandable failure details. One test at a time, with a combined 60-second catalog/request deadline; no configuration or checkbox changes and no automatic retries. Consumes a small amount of quota and checks only this short text request, not tools, images or long-context support. Results stay in page memory and disappear on reload.
 
 **Usage**
 
@@ -53,7 +56,18 @@
 
 **Accounts**
 
-- OAuth accounts omp can route per account, grouped by provider (identity from `omp usage accounts`, no tokens; remaining quota from `omp usage`); logins without an identity and API-key credentials are not shown. Each account gets a **priority** and **reserve %** editor that writes omp's native `auth.accountPolicies` in `config.yml` (backup + targeted block rewrite; everything outside the block stays byte-identical); leave both empty to clear. The global default `retry.usageReservePct` is editable on the same page. Policies that match no signed-in account are listed separately with a delete button. Priority only orders healthy, measured accounts and affects new sessions; it never overrides rate limits or reserve. Add accounts with `/login` in omp. A policy block containing comments or flow syntax is shown read-only.
+- Signed-in OAuth accounts grouped by provider (identity from `omp usage accounts`, no tokens; remaining quota from `omp usage`; removable entries come from omp's `get_logout_accounts` RPC). Both OAuth logins and API-key credentials are listed and removable; a credential omp gives no identity (e.g. devin) cannot take a policy but can still be logged out from its row. Each account gets a **priority**, **reserve %** and **reclaim above %** editor (`reclaimAbovePct`, omp ≥18.12.4: sessions demoted to a lower-priority account return once its remaining share recovers above that threshold; it must exceed the reserve) that writes omp's native `auth.accountPolicies` in `config.yml` (backup + targeted block rewrite; everything outside the block stays byte-identical); leave all three empty to clear. The global default `retry.usageReservePct` is editable on the same page. Policies that match no signed-in account are listed separately with a delete button. Priority only orders healthy, measured accounts and affects new sessions; it never overrides rate limits or reserve. Add accounts with `/login` in omp. A policy block containing comments or flow syntax is shown read-only.
+- Each row has a **Log out** button. The row and the confirmation both show the label/detail and `#credentialId`
+  that omp itself reports, so two logins with the same email in different organizations are distinguishable.
+  Confirming calls omp's own `logout` RPC (the same path as `/logout`): one stored credential, OAuth or API key,
+  removed by that exact id. No SQLite writes, no cancellation of the paid plan, other accounts untouched, and
+  `modelRoles` / `models` / account policies left alone. Before deleting, the server verifies that the id is still
+  listed by omp, that the local credential store agrees on the provider, and that the identity is **exactly equal**
+  after normalization (a field appearing or disappearing counts as a change, so an old page cannot remove a login that
+  omp since upgraded to an organization-scoped identity); a credential whose owner cannot be verified is refused rather
+  than guessed. Failures keep the row and surface the error; success reloads the list and reports only whether another
+  auth source remains. Removal is disabled, with an explanation, when omp keeps credentials in an auth-broker
+  (deleting would act on a shared remote store) or when the agent directory cannot be determined.
 - Each account has a **Disable (fallback only)** / **Enable** button. Disabling is **not a hard off**: it writes the account's reserve as 100% (omp's native policy has no disable field), so the account is skipped normally — sessions pinned to it move away on their next request — and is used only as a fallback when every other account is rate-limited, exhausted, or inside its reserve. Enabling clears the account's reserve (back to the global default; a previous custom reserve is not kept); priority is unchanged.
 
 **Desktop widget** (`widget.py`)
@@ -66,7 +80,7 @@
 ## Requirements
 
 - Python 3.8+ (standard library only, zero dependencies)
-- [omp](https://github.com/can1357/oh-my-pi) installed and on `PATH` (used for `omp models --json`)
+- [omp](https://github.com/can1357/oh-my-pi) installed and on `PATH` (`omp models --json` for the catalog; connectivity testing requires a version supporting `omp bench --json`)
 - **Windows** for the desktop widget (`widget.py`): it pins itself to the desktop layer, keeps Win11 rounded corners and is per-monitor DPI aware through Win32 calls, none of which exist elsewhere. The web panel (`server.py`) is plain Python and runs on any OS.
 
 ## Usage
@@ -82,6 +96,17 @@ Desktop widget (Windows):
 pythonw widget.py           # no console window; right-click the widget for the menu
 ```
 
+Isolated profile / port (for testing against a throwaway omp profile):
+
+```bash
+OMP_PROFILE=my-test OMP_SETTINGS_PORT=8799 python server.py --no-browser
+```
+
+The panel does not inject `--profile`: every `omp` call inherits your environment and omp resolves
+the profile itself (`--profile` > `OMP_PROFILE` > `PI_PROFILE`, where an empty value or `default`
+means the default profile). The credential/config directories are then taken from `omp config path`,
+so a test run never touches your real credentials or config. Unset by default (`~/.omp/agent`, port 8788).
+
 Open [http://127.0.0.1:8788](http://127.0.0.1:8788), click **Switch** on a role, pick a provider group, then a model, **Save**. The change applies immediately — running omp sessions pick it up, no restart needed.
 
 ## How it stays safe
@@ -95,6 +120,14 @@ Open [http://127.0.0.1:8788](http://127.0.0.1:8788), click **Switch** on a role,
 
 Server binds to `127.0.0.1` only. Value/role inputs are validated against a whitelist regex before touching the file.
 
+Credential removal never edits `agent.db`. The panel only reads `provider` and `identity_key` from
+`auth_credentials` (never `data`) to cross-check identity, and the deletion itself is omp's own
+`logout` RPC, which also refreshes the model registry and account pins. Every RPC child process is
+killed after the call (25s cap) and its stderr is discarded, so no credential text can reach a log.
+
+Destructive endpoints (`/api/accounts/logout`) reject cross-site `Origin`/`Referer` before reading
+the body, so another website open in your browser cannot borrow localhost access to delete credentials.
+
 > ⚠️ Pitfall worth knowing (and the reason for #2): on Windows, Python's `Path.write_text()` silently translates LF to CRLF, which would rewrite your entire config's line endings.
 
 ## API
@@ -102,6 +135,7 @@ Server binds to `127.0.0.1` only. Value/role inputs are validated against a whit
 | Endpoint | Method | Purpose |
 |---|---|---|
 | `/api/state` | GET | Current roles (parsed from config.yml) + full model catalog (`omp models --json`) |
+| `/api/models/test` | POST | `{"selector":"provider/model-id"}` — one real request; returns `{ok, selector, code, elapsedMs, model?, durationMs?, ttftMs?, error?}`. Exact current catalog entries only; 400 for invalid model, 409 when another test is running, 200 for other test outcomes; errors are redacted. |
 | `/api/set` | POST | `{"role": "...", "value": "..."}` — backup + targeted write |
 | `/api/settings` | GET | Full settings catalog (`omp config list --json`) + zh annotations + `__groupmap` |
 | `/api/set-key` | POST | `{"key": "...", "value": "..."}` — type-coerced scalar write, backup + targeted line edit |
@@ -113,8 +147,9 @@ Server binds to `127.0.0.1` only. Value/role inputs are validated against a whit
 | `/api/usage/invalidate` | POST | `{"provider": "all"|<provider id>}` — whitelist-checked `omp usage invalidate`, forces re-fetch |
 | `/api/usage/redeem` | POST | `{"provider": "anthropic"\|"openai-codex"}` — spends one saved reset credit via the same upstream calls as omp's `/usage reset` (two-step request_id confirm for Anthropic, single idempotent consume for Codex); structured `{ok, code, error}` responses, tokens never exposed |
 | `/api/accounts` | GET | Accounts per provider (identity, quota, matching policy), unmatched policies, default reserve |
-| `/api/accounts/policy` | POST | `{"provider", "identityKey", "priority", "reservePct"}` — upsert/clear the policy of a signed-in OAuth account; validated, backed up |
+| `/api/accounts/policy` | POST | `{"provider", "identityKey", "priority", "reservePct", "reclaimAbovePct"}` — upsert/clear the policy of a signed-in OAuth account; validated, backed up |
 | `/api/accounts/policy-delete` | POST | `{"index", "provider", "account"}` — delete one policy; rejected if the entry no longer matches |
+| `/api/accounts/logout` | POST | `{"provider", "credentialId", "identityKey"?}` — remove one stored credential (OAuth or API key) by omp's `credentialId`; soft delete, the subscription is untouched. Requires same-origin `Host` plus a matching `Origin`/`Referer`; refuses when the credential is gone/changed (409), the identity does not match exactly (409), the provider is unverifiable or omp runs on an auth-broker (503/409), or the RPC is unavailable (503) |
 
 ## License
 

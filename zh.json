@@ -534,8 +534,8 @@
   },
   "auth.accountPolicies": {
     "name": "OAuth 账号使用策略",
-    "desc_en": "Array of account policies for authentication, empty by default (inferred, undocumented upstream); understood from the name and the auth family as per-account usage policies such as routing or limit preferences — single-account users need not set it.",
-    "desc": "为同一提供商下的多个已保存 OAuth 账号配置使用策略的数组。每项包含 provider（提供商 id，如 anthropic）、account（按 email/accountId/projectId 匹配某个账号），可选 priority（优先级）和 reservePct（该账号保留多少百分比的配额不花）。用于多账号轮换时的配额保护；单账号用户留空即可。"
+    "desc_en": "Array of account policies for authentication, empty by default. Each item has provider, account (selector matching a signed-in OAuth account via email/accountId/projectId/orgId), and optional scalars priority (account preference), reservePct (share of the window quota left unused), and reclaimAbovePct (omp ≥18.12.4: sessions demoted to a lower-priority account return to this account once its remaining share recovers above that threshold; must be greater than reservePct). Single-account users can leave it unset.",
+    "desc": "为同一提供商下的多个已保存 OAuth 账号配置使用策略的数组。每项包含 provider（提供商 id，如 anthropic）、account（按 email/accountId/projectId 匹配某个账号），可选 priority（优先级）、reservePct（该账号保留多少百分比的配额不花）和 reclaimAbovePct（omp ≥18.12.4：会话被降级到低优先级账号后，该账号剩余额度恢复到该百分比以上时自动切回，必须大于 reservePct）。用于多账号轮换时的配额保护；单账号用户留空即可。"
   },
   "auth.broker.token": {
     "name": "认证代理令牌",

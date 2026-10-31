@@ -94,14 +94,34 @@
   .vm-head button { padding: 3px 10px; font-size: 12px; }
   .vm-list { padding: 2px 12px 8px 34px; display: none; }
   .vm-prov.open .vm-list { display: block; }
-  .vm-item { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; cursor: pointer; }
-  .vm-item .sel { font-family: Consolas, monospace; color: #6b7280; font-size: 11px; }
+  .vm-item { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0;
+             font-size: 12px; flex-wrap: wrap; }
+  .vm-item .vm-pick { display: flex; align-items: center; gap: 8px; flex: 1;
+                      min-width: 0; cursor: pointer; flex-wrap: wrap; }
+  .vm-item .vm-pick .mname { min-width: 0; overflow-wrap: anywhere; }
+  .vm-item .sel { font-family: Consolas, monospace; color: #6b7280; font-size: 11px;
+                  overflow-wrap: anywhere; }
   .vm-item.def .mname::after { content: attr(data-tag); margin-left: 6px; font-size: 10px;
                                background: #274a2d; color: #8ee08e; border-radius: 4px; padding: 1px 5px; }
+  .vm-item .probe-btn { flex: none; padding: 1px 10px; font-size: 11px; }
+  .vm-item .probe-status { flex-basis: 100%; font-size: 11px; color: #8b93a1;
+                           overflow-wrap: anywhere; }
+  .vm-item .probe-status.ok { color: #8ee08e; }
+  .vm-item .probe-status.bad { color: #e08e8e; }
+  .vm-item .probe-status.run { color: #9fc3ff; }
+  .vm-item .probe-status details summary { cursor: pointer; }
+  .vm-item .probe-status .probe-err { display: block; color: #8b93a1;
+                                      white-space: pre-wrap; overflow-wrap: anywhere;
+                                      padding: 2px 0 0 14px; }
   .vm-note { font-size: 12px; color: #8b93a1; margin-bottom: 10px; line-height: 1.6; }
   .vm-bar { position: sticky; bottom: 0; background: #16181d; padding: 10px 0;
             display: flex; gap: 10px; align-items: center; border-top: 1px solid #2a2e37; }
   .vm-bar .dirty { font-size: 12px; color: #e0c98e; }
+  /* 供应商分组标题上的删除按钮：只在可删的自定义供应商上出现 */
+  .vm-head .cp-del { padding: 2px 9px; font-size: 11px; }
+  .vm-head .cp-del:disabled { cursor: not-allowed; }
+  .vm-head .cp-tag { font-size: 11px; color: #6b7280; }
+  .vm-head .cp-tag.bad { color: #e08e8e; }
   /* ---------- 用量 / Usage ---------- */
   .u-card { border: 1px solid #2a2e37; border-radius: 8px; background: #1c1f26;
             padding: 10px 12px; margin-bottom: 10px; }
@@ -137,6 +157,11 @@
   .a-pol { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; font-size: 12px; color: #8b93a1; }
   .a-pol input { width: 70px; padding: 2px 6px; }
   .a-tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #2b2616; color: #e3b341; }
+  .a-del { margin-left: auto; }
+  .a-del:disabled { opacity: .45; cursor: not-allowed; }
+  .a-cid { font-size: 11px; font-family: ui-monospace, Consolas, monospace; color: #9aa4b2;
+           background: #1d2129; border-radius: 4px; padding: 1px 6px; }
+  .a-detail { font-size: 11px; color: #7d8592; margin: -2px 0 4px; word-break: break-all; }
   .role .rdesc { flex: 1; min-width: 0; font-size: 11px; color: #8b93a1;
                  line-height: 1.55; white-space: normal; }
   .role.editing .rdesc { flex-basis: 100%; order: 10; }
@@ -216,6 +241,7 @@
 </div>
 <div id="view-models" style="display:none">
   <div class="vm-note" id="vm-note"></div>
+  <div class="vm-note" id="vm-probe-note"></div>
   <div class="toolbar">
     <input type="text" id="vm-q" placeholder="">
     <span class="count" id="vm-count"></span>
@@ -252,6 +278,7 @@ const MACRO_GROUP_EN = {"AST 工具":"AST Tools","Git 与提交":"Git & Commits"
   "供应商与认证":"Providers & Auth","协作与分享":"Collaboration & Sharing","安全与遥测":"Security & Telemetry",
   "开发与调试":"Development & Debugging","技能与自动学习":"Skills & Auto Learning","检索与读取":"Retrieval & Reading",
   "界面与输入":"UI & Input","系统与更新":"System & Update","记忆系统":"Memory Systems","语音":"Voice"};
+function fmtMs(ms) { return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`; }
 const T = {
   zh: {
     title: 'omp 设置中心',
@@ -308,6 +335,39 @@ const T = {
     vmDefTag: '默认角色·始终显示',
     vmSaved: n => `已保存：显示 ${n} 个模型（已备份 config.yml，omp 即时生效）`,
     vmUnmanaged: 'config.yml 的 enabledModels 含 path 作用域等复杂结构，本页只读，请手工编辑。',
+    vmProbeNote: '「测试」对每个模型发一次真实短请求（输出上限 256 tokens，消耗少量额度）：请求关闭 thinking，只测该模型、不走备用链、不改配置，最长 60 秒；结果仅代表本次请求，刷新页面即清空。',
+    vmProbeBtn: '测试',
+    vmProbeAria: s => `测试 ${s}`,
+    vmProbeRunning: '测试中…',
+    vmProbeCode: c => ({success:'成功', error:'失败', timeout:'超时', invalid_model:'未知模型',
+                        busy:'服务忙', unavailable:'不可用', invalid_response:'响应异常'}[c] ?? c),
+    vmProbeTtft: ms => `首 token ${fmtMs(ms)}`,
+    vmProbeDur: ms => `模型请求 ${fmtMs(ms)}`,
+    vmProbeElapsed: ms => `总耗时 ${fmtMs(ms)}`,
+    vmProbeErr: e => `错误: ${e}`,
+    cpDelete: '删除供应商',
+    cpBusy: '删除中…',
+    cpBuiltin: '内置供应商的覆盖设置，不在本页删除范围',
+    cpBuiltinShort: '内置覆盖块',
+    cpInvalidName: '名称不是合法的供应商标识，请手工编辑',
+    cpCatalogUnavailable: '无法读取 omp 模型目录，暂不能删除（无法确认裸模型 ID 是否还有其他提供者）',
+    cpDeleteHint: n => `删除这条供应商定义` +
+      (n ? `（${n} 个模型）` : '（没有模型）') + '；同时清掉 config.yml 里指向它的引用',
+    cpNoModels: '（无模型）',
+    cpConfirmHead: (name, models, file) => `删除供应商定义「${name}」？\n\n` +
+      `文件：${file}\n模型：${models}\n`,
+    cpConfirmRefs: '以下 config.yml 引用会被一并清空：',
+    cpConfirmRef: (path, before, after) => `${path}: ${before} → ${after}`,
+    cpRefDrop: '（整条删除）',
+    cpWarnEmpty: '注意：「模型显示」名单会被清空。空名单在 omp 里等于显示全部模型。',
+    cpFlowHint: 'flow 写法（{…} / […]）不再自动改写，请先改成块写法（每项一行）。',
+    cpConfirmTail: '只清理模型选择字段（模型角色、备用链、模型显示等），' +
+      '其他设置项、账号登录、环境变量与其他供应商都不动；' +
+      '两个文件都会先自动备份，任一步失败会整体回滚。',
+    cpDeleted: (name, n) => `已删除供应商定义「${name}」` +
+      (n ? `，并清空 ${n} 处引用` : ''),
+    cpPartial: (files, backups) => `写入失败，且以下文件没能自动恢复：${files.join('、')}。\n` +
+      `请用备份手工恢复（同目录，删除前的原内容）：${backups.join('、')}`, 
     tabUsage: '用量',
     uRefresh: '刷新', uAuto: '每 60 秒自动刷新',
     uUpdated: ts => `更新于 ${ts}`,
@@ -319,15 +379,30 @@ const T = {
     uExpire: ds => `过期 ${ds}`,
     uRemain: v => `剩余 ${v}`, uUsed: v => `已用 ${v}`,
     tabAccounts: '账号', aRefresh: '刷新',
-    aIntro: '列出 omp 可按账号设置选号策略的 OAuth 账号与剩余额度（无身份标识的登录、API Key 凭据不显示），可为每个账号设置选号策略（写入 config.yml 的 auth.accountPolicies，自动备份，omp 即时生效）。优先级越高越先用，但只在健康、额度可测的账号之间比较，不会越过限流与保留额度保护；只影响新会话，运行中的会话保持当前账号。保留额度%：剩余额度低于该值时视为接近上限、让位给其他账号。「停用（仅兜底）」不是完全停用：它把该账号保留额度设为 100%，平时不选，只在其他账号都被限流、用完或进入保留额度时兜底使用。新增账号请在 omp 中执行 /login。',
+    aIntro: '列出 omp 已登录的账号与剩余额度（OAuth 登录与 API Key 凭据都会列出；omp 没给身份标识的凭据无法设策略，但仍可注销），每行用 omp 自己给的标签、详情与 #ID 标识删除对象，可为每个账号设置选号策略（写入 config.yml 的 auth.accountPolicies，自动备份，omp 即时生效）。优先级越高越先用，但只在健康、额度可测的账号之间比较，不会越过限流与保留额度保护；只影响新会话，运行中的会话保持当前账号。保留额度%：剩余额度低于该值时视为接近上限、让位给其他账号。切回阈值%（reclaimAbovePct，omp ≥18.12.4）：会话被降级到低优先级账号后，该账号剩余额度恢复到这个百分比以上时自动切回，必须大于保留额度。「停用（仅兜底）」不是完全停用：它把该账号保留额度设为 100%，平时不选，只在其他账号都被限流、用完或进入保留额度时兜底使用；停用时切回阈值会被一并清除。新增账号请在 omp 中执行 /login。',
     aReserve: '全局默认保留额度%（retry.usageReservePct）', aReserveUnset: '未设置，omp 默认',
-    aPriority: '优先级', aReservePct: '保留额度%', aSave: '保存', aClear: '清除策略',
+    aPriority: '优先级', aReservePct: '保留额度%', aReclaimPct: '切回阈值%', aSave: '保存', aClear: '清除策略',
     aNoPolicy: '未设策略（按 omp 默认选号）', aHasPolicy: '已设策略',
     aDisable: '停用（仅兜底）', aEnable: '启用', aDisabledTag: '已停用 · 仅兜底',
-    aDisableNote: '停用不是完全停用：账号保留额度被设为 100%，平时不会被选中，只在其他账号都被限流、额度用完或进入保留额度时作为兜底使用；启用会清除该账号的保留额度（回到全局默认），优先级不变。',
+    aDisableNote: '停用不是完全停用：账号保留额度被设为 100%，平时不会被选中，只在其他账号都被限流、额度用完或进入保留额度时作为兜底使用；启用会清除该账号的保留额度（回到全局默认），优先级不变。停用/启用都会一并清除切回阈值。',
     aStale: '指向未登录账号的策略', aStaleHint: '这些策略匹配不到任何当前已登录账号，不会生效；账号重新登录后会自动对上。',
     aDelete: '删除', aSaved: '已保存（已备份 config.yml）', aDeleted: '已删除',
-    aDefaultPh: n => `默认 ${n}`,
+    aDefaultPh: n => `默认 ${n}`, aReclaimPh: '不设置',
+    aLogout: '注销登录', aLoggingOut: '注销中…',
+    aLogoutNote: '从 omp 移除这条已存凭据（等价 /logout），不取消供应商那边的付费订阅',
+    aLogoutUnavailable: '拿不到 omp 的凭据列表（见上方提示），暂时不能注销',
+    aLogoutConfirm: (prov, detail, cid, org) =>
+      `从 omp 注销这条凭据？\n\n供应商：${prov}\n凭据：${detail}\nID：#${cid}${org ? `\n组织：${org}` : ''}\n\n` +
+      '只删除本机保存的这条凭据，不会取消你在供应商那边的付费订阅，也不影响其他账号。',
+    aLoggedOut: prov => `${prov} 的这条登录已注销`,
+    aLoggedOutLeft: prov => `${prov} 的这条登录已注销；该供应商仍有其他认证源`,
+    aNoIdentityTag: '无身份标识 · 仅可注销', aActiveTag: '当前使用中',
+    aNoIdentityNote: 'omp 没给这个登录任何身份标识（常见于 devin 等登录），无法按账号设策略；它仍可被注销。',
+    aUnnamedAccount: '(omp 未提供账号标签)',
+    aRpcError: msg => `读取 omp 凭据列表失败：${msg}（账号可看，但暂时不能注销）`,
+    aBrokerNote: 'omp 当前把凭据托管在 auth-broker 上，注销会作用到共享的远程凭据库，可能影响其他客户端。本页只做只读展示，不执行删除；请在该 broker 上自行管理。',
+    aAgentDir: dir => `凭据与配置目录（由 omp 自己报告）：${dir}`,
+    aAgentDirError: msg => `无法确定 omp 的凭据与配置目录：${msg}。为避免读错档或删错凭据，本页已关闭注销功能。`,
     uReset: '重置于 ', uResetNow: '即将重置',
     uNoUsageAcct: n => `无用量端点的账号 ×${n}`,
     uDisabledCred: n => `已停用凭据 ×${n}`,
@@ -432,6 +507,43 @@ const T = {
     vmDefTag: 'default role · always shown',
     vmSaved: n => `Saved: ${n} models shown (config.yml backed up; applies immediately)`,
     vmUnmanaged: 'enabledModels in config.yml uses path-scoped or nested entries; this page is read-only — edit it by hand.',
+    vmProbeNote: '“Test” sends one real short request per model (256-token output limit, minor quota cost), requesting thinking off: that model only, no fallback chain, no config changes, up to 60s; the result reflects this request only and is cleared on refresh.',
+    vmProbeBtn: 'Test',
+    vmProbeAria: s => `Test ${s}`,
+    vmProbeRunning: 'Testing…',
+    vmProbeCode: c => ({success:'success', error:'error', timeout:'timeout', invalid_model:'unknown model',
+                        busy:'busy', unavailable:'unavailable', invalid_response:'invalid response'}[c] ?? c),
+    vmProbeTtft: ms => `first token ${fmtMs(ms)}`,
+    vmProbeDur: ms => `model request ${fmtMs(ms)}`,
+    vmProbeElapsed: ms => `total ${fmtMs(ms)}`,
+    vmProbeErr: e => `error: ${e}`,
+    cpDelete: 'Delete provider',
+    cpBusy: 'Deleting…',
+    cpBuiltin: 'Overrides for a built-in provider — not removable here',
+    cpBuiltinShort: 'built-in override',
+    cpInvalidName: 'Name is not a valid provider identifier; edit by hand',
+    cpCatalogUnavailable: 'Cannot read the omp model catalog, so deletion is unavailable '
+      + '(cannot tell whether a bare model id has other providers)',
+    cpDeleteHint: n => `Delete this provider definition` +
+      (n ? ` (${n} model${n > 1 ? 's' : ''})` : ' (no models)') +
+      ' and clear every config.yml reference to it',
+    cpNoModels: '(no models)',
+    cpConfirmHead: (name, models, file) => `Delete the provider definition “${name}”?\n\n` +
+      `File: ${file}\nModels: ${models}\n`,
+    cpConfirmRefs: 'These config.yml references will be cleared too:',
+    cpConfirmRef: (path, before, after) => `${path}: ${before} → ${after}`,
+    cpRefDrop: '(removed)',
+    cpWarnEmpty: 'Note: this empties the model-visibility list, which in omp means showing every model.',
+    cpFlowHint: 'Flow-style ({…} / […]) values are no longer rewritten; '
+      + 'convert them to block style (one entry per line) first.',
+    cpConfirmTail: 'Only model-selector fields are cleared (roles, fallback chains, ' +
+      'model visibility); other settings, sign-ins, environment variables and other ' +
+      'providers stay untouched. Both files are backed up first and any failed step ' +
+      'rolls everything back.',
+    cpDeleted: (name, n) => `Deleted provider definition “${name}”` +
+      (n ? ` and cleared ${n} reference${n > 1 ? 's' : ''}` : ''),
+    cpPartial: (files, backups) => `Writing failed and these files were not restored automatically: ${files.join(', ')}.\n` +
+      `Restore them by hand from these backups (same directory, content from before the delete): ${backups.join(', ')}`,
     tabUsage: 'Usage',
     uRefresh: 'Refresh', uAuto: 'Auto-refresh every 60s',
     uUpdated: ts => `Updated ${ts}`,
@@ -443,15 +555,30 @@ const T = {
     uExpire: ds => `expiring ${ds}`,
     uRemain: v => `${v} left`, uUsed: v => `${v} used`,
     tabAccounts: 'Accounts', aRefresh: 'Refresh',
-    aIntro: 'OAuth accounts omp can route per account, with remaining quota (logins without an identity and API-key credentials are not shown). Set a routing policy per account (written to auth.accountPolicies in config.yml; backed up, picked up by omp immediately). Higher priority is preferred, but only among healthy, measured accounts — it never overrides rate-limit blocks or quota reserve, and it only affects new sessions; running sessions keep their account. Reserve %: below this remaining share an account counts as near its limit and yields to others. "Disable (fallback only)" is not a hard off: it sets the account\'s reserve to 100%, so it is skipped normally and used only when every other account is rate-limited, exhausted, or inside its reserve. Add accounts with /login in omp.',
+    aIntro: 'Signed-in accounts with remaining quota (OAuth logins and API-key credentials alike; a credential omp gives no identity cannot take a policy but can still be logged out). Every row identifies its removal target with the label, detail and #ID that omp reports. Set a routing policy per account (written to auth.accountPolicies in config.yml; backed up, picked up by omp immediately). Higher priority is preferred, but only among healthy, measured accounts — it never overrides rate-limit blocks or quota reserve, and it only affects new sessions; running sessions keep their account. Reserve %: below this remaining share an account counts as near its limit and yields to others. Reclaim above % (reclaimAbovePct, omp ≥18.12.4): sessions moved to a lower-priority account return to this one once its remaining share recovers past that threshold; it must be greater than the reserve. "Disable (fallback only)" is not a hard off: it sets the account\'s reserve to 100%, so it is skipped normally and used only when every other account is rate-limited, exhausted, or inside its reserve; disabling also clears the reclaim threshold. Add accounts with /login in omp.',
     aReserve: 'Global default reserve % (retry.usageReservePct)', aReserveUnset: 'unset, omp default',
-    aPriority: 'Priority', aReservePct: 'Reserve %', aSave: 'Save', aClear: 'Clear policy',
+    aPriority: 'Priority', aReservePct: 'Reserve %', aReclaimPct: 'Reclaim above %', aSave: 'Save', aClear: 'Clear policy',
     aNoPolicy: 'No policy (omp default ranking)', aHasPolicy: 'Policy set',
     aDisable: 'Disable (fallback only)', aEnable: 'Enable', aDisabledTag: 'Disabled · fallback only',
-    aDisableNote: 'Disabling is not a hard off: the account\'s reserve is set to 100%, so it is skipped normally and used only as a fallback when every other account is rate-limited, exhausted, or inside its reserve. Enabling clears its reserve (back to the global default); priority is kept.',
+    aDisableNote: 'Disabling is not a hard off: the account\'s reserve is set to 100%, so it is skipped normally and used only as a fallback when every other account is rate-limited, exhausted, or inside its reserve. Enabling clears its reserve (back to the global default); priority is kept. Disabling or enabling also clears the reclaim threshold.',
     aStale: 'Policies for accounts not signed in', aStaleHint: 'These match no signed-in account and have no effect; they apply again once the account signs back in.',
     aDelete: 'Delete', aSaved: 'Saved (config.yml backed up)', aDeleted: 'Deleted',
-    aDefaultPh: n => `default ${n}`,
+    aDefaultPh: n => `default ${n}`, aReclaimPh: 'unset',
+    aLogout: 'Log out', aLoggingOut: 'Logging out…',
+    aLogoutNote: 'Remove this stored credential from omp (same as /logout); it does not cancel the paid plan with the provider',
+    aLogoutUnavailable: 'omp\'s credential list is unavailable (see the notice above), so this cannot be removed right now',
+    aLogoutConfirm: (prov, detail, cid, org) =>
+      `Remove this credential from omp?\n\nProvider: ${prov}\nCredential: ${detail}\nID: #${cid}${org ? `\nOrganization: ${org}` : ''}\n\n` +
+      'Only the credential stored on this machine is removed. Your paid plan with the provider is not cancelled and other accounts are untouched.',
+    aLoggedOut: prov => `Removed that ${prov} credential`,
+    aLoggedOutLeft: prov => `Removed that ${prov} credential; this provider still has another auth source`,
+    aNoIdentityTag: 'No identity · removable only', aActiveTag: 'In use',
+    aNoIdentityNote: 'omp gives this login no identity (typical for devin and some CLI logins), so no per-account policy applies; it can still be logged out.',
+    aUnnamedAccount: '(omp reports no label for this account)',
+    aRpcError: msg => `Could not read omp's credential list: ${msg} (accounts are shown, but removal is disabled)`,
+    aBrokerNote: 'omp currently keeps credentials in an auth-broker, so removing one would act on a shared remote credential store and could affect other clients. This page is read-only here and will not delete anything; manage it on that broker instead.',
+    aAgentDir: dir => `Credential and config directory (as reported by omp): ${dir}`,
+    aAgentDirError: msg => `Could not determine omp's credential and config directory: ${msg}. Removal is disabled so this page cannot read the wrong profile or delete the wrong credential.`,
     uReset: 'resets ', uResetNow: 'resetting soon',
     uNoUsageAcct: n => `Accounts without usage endpoints ×${n}`,
     uDisabledCred: n => `Disabled credentials ×${n}`,
@@ -535,6 +662,7 @@ function applyStaticLang() {
   document.getElementById('vm-q').placeholder = t().vmSearch;
   document.getElementById('vm-save').textContent = t().vmSave;
   document.getElementById('vm-reset').textContent = t().vmReset;
+  document.getElementById('vm-probe-note').textContent = t().vmProbeNote;
   document.getElementById('q').placeholder = t().searchPh;
   document.getElementById('only-custom-text').textContent = t().onlyCustom;
   document.getElementById('lang-zh').classList.toggle('active', LANG === 'zh');
@@ -1365,10 +1493,152 @@ function settingRow(it) {
 /* ---------- 模型显示（enabledModels） ---------- */
 const vm = { models: [], saved: new Set(), sel: new Set(), def: null, managed: true, open: new Set() };
 
+/* 逐模型连通性测试：结果只存内存，不持久化；一次只跑一个 */
+const probe = { running: null, results: new Map() };
+function renderProbeStatus(st, m) {
+  const p = probe.running === m.selector ? {state: 'run'} : probe.results.get(m.selector);
+  st.className = 'probe-status';
+  if (!p) { st.textContent = ''; st.style.display = 'none'; return; }
+  st.style.display = '';
+  if (p.state === 'run') { st.classList.add('run'); st.textContent = t().vmProbeRunning; return; }
+  const r = p.res;
+  const code = t().vmProbeCode(r.code || (r.ok ? 'success' : 'error'));
+  const parts = [code];
+  if (typeof r.elapsedMs === 'number') parts.push(t().vmProbeElapsed(r.elapsedMs));
+  if (r.ok) {
+    if (typeof r.ttftMs === 'number') parts.push(t().vmProbeTtft(r.ttftMs));
+    if (typeof r.durationMs === 'number') parts.push(t().vmProbeDur(r.durationMs));
+    st.classList.add('ok');
+    st.textContent = `✓ ${parts.join(' · ')}`;
+  } else {
+    st.classList.add('bad');
+    if (r.error) {
+      const det = document.createElement('details');
+      const sum = document.createElement('summary');
+      sum.textContent = `✗ ${parts.join(' · ')}`;
+      const err = document.createElement('span');
+      err.className = 'probe-err';
+      err.textContent = t().vmProbeErr(r.error);
+      det.append(sum, err);
+      st.textContent = ''; st.appendChild(det);
+    } else {
+      st.textContent = `✗ ${parts.join(' · ')}`;
+    }
+  }
+}
+async function runModelTest(m) {
+  if (probe.running) return;
+  probe.running = m.selector;
+  renderModels();
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 75000); // 略宽于后端 60 秒上限
+  let res;
+  try {
+    res = await fetch('/api/models/test', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({selector: m.selector}),
+      signal: ctl.signal}).then(x => x.json());
+  } catch (e) {
+    res = {ok: false, code: ctl.signal.aborted ? 'timeout' : 'error',
+           selector: m.selector, error: String(e && e.message || e)};
+  } finally {
+    clearTimeout(timer);
+    probe.running = null;
+    probe.results.set(m.selector, {res: res || {ok: false, code: 'invalid_response',
+                                             selector: m.selector}});
+    renderModels();
+  }
+}
+
 async function loadModels() {
-  const r = await fetch('/api/visibility').then(x => x.json());
+  const [r, c] = await Promise.all([
+    fetch('/api/visibility').then(x => x.json()),
+    fetch('/api/custom-providers').then(x => x.json()).catch(e => ({error: String(e)})),
+  ]);
   if (r.error) { toast(t().failed(r.error), true); return; }
   applyVisibility(r);
+  applyCustomProviders(c);
+}
+
+/* 自定义供应商定义（models.yml 的 providers.<name>）：删除按钮挂在「模型显示」
+   的供应商分组标题上，不再有独立面板。这里只保存名字、模型 id、将被清掉的
+   config 引用；后端从不回传 baseUrl/apiKey/headers 等连接配置。 */
+const cp = { file: null, digest: null, configDigest: null, providers: [],
+             error: null, busy: null, partial: null };
+function applyCustomProviders(c) {
+  cp.file = c && c.file || null;
+  cp.digest = c && c.digest || null;
+  cp.configDigest = c && c.configDigest || null;
+  cp.providers = (c && c.providers) || [];
+  cp.error = c && c.error || null;
+  renderModels();
+}
+function cpEntry(name) {
+  return cp.providers.find(p => p.name === name) || null;
+}
+/* 按钮的禁用原因；返回空字符串表示可以删。 */
+function cpBlocked(p) {
+  const sep = LANG === 'zh' ? '；' : '; ';
+  if (p.reasonCode === 'builtin_override') return t().cpBuiltin;
+  if (p.reasonCode === 'invalid_name') return t().cpInvalidName;
+  const why = (p.unsupported || []).join(sep);
+  if (p.reasonCode === 'unavailable') {
+    // 目录读不到时后端给 unavailable；把原因说得更具体一点
+    if (/模型目录|catalog/i.test(why)) {
+      return t().cpCatalogUnavailable + (why ? sep + why : '');
+    }
+    return why || t().cpUnavailable;
+  }
+  if (p.reasonCode === 'unsupported') {
+    // 含 flow 容器时给出可操作建议
+    if (/flow/.test(why)) return why + sep + t().cpFlowHint;
+    return why;
+  }
+  return '';
+}
+/* 确认框正文：供应商、将删除的模型、文件，以及逐条将被清空的引用。 */
+function cpConfirmText(p) {
+  const lines = [t().cpConfirmHead(p.name, p.models.join(', ') || t().cpNoModels,
+                                   cp.file)];
+  if (p.cleared.length) {
+    lines.push(t().cpConfirmRefs);
+    for (const c of p.cleared) {
+      lines.push('  ' + t().cpConfirmRef(c.path, c.before,
+                                         c.after === null ? t().cpRefDrop : c.after));
+    }
+  }
+  if (p.enabledEmptied) lines.push('', t().cpWarnEmpty);
+  lines.push('', t().cpConfirmTail);
+  return lines.join('\n');
+}
+async function deleteProvider(p, btn) {
+  if (cp.busy) return;
+  if (!confirm(cpConfirmText(p))) return;
+  cp.busy = p.name;
+  btn.disabled = true;
+  btn.textContent = t().cpBusy;
+  let r;
+  try {
+    r = await postJSON('/api/custom-providers/delete',
+                       {provider: p.name, expectDigest: cp.digest,
+                        expectConfigDigest: cp.configDigest});
+  } catch (e) {
+    r = {ok: false, error: String(e && e.message || e)};
+  } finally {
+    cp.busy = null;
+  }
+  if (!r.ok) {
+    // 部分写入失败时后端会给出未恢复文件与可直接使用的备份路径，必须原样展示
+    toast(t().failed(r.error || r.code || 'unknown'), true);
+    if (r.code === 'partial') cp.partial = r;
+    await loadModels();       // 定义、模型列表、角色候选一起刷新
+    load();
+    return;
+  }
+  cp.partial = null;
+  toast(t().cpDeleted(p.name, (r.cleared || []).length));
+  await loadModels();
+  load();
 }
 function applyVisibility(r) {
   vm.models = r.models; vm.def = r.default; vm.managed = r.managed;
@@ -1388,6 +1658,27 @@ function vmStatus() {
   document.getElementById('vm-save').disabled = !vm.managed || d === 0 || vm.sel.size === 0;
   document.getElementById('vm-reset').disabled = d === 0;
 }
+/* 在供应商分组标题上挂「删除供应商」按钮：只有 models.yml 里可删的自定义供应商
+   才有；内置覆盖块、结构超出可安全重写范围的、引用清不掉的都禁用并给出原因。
+   按钮在 head.onclick 之外单独 stopPropagation，点它不会折叠/展开分组。 */
+function appendProviderDelete(provider, head) {
+  const p = cpEntry(provider);
+  if (!p) return;                       // 不是 models.yml 里的供应商定义
+  if (p.reasonCode === 'builtin_override' || p.reasonCode === 'invalid_name') {
+    // 内置覆盖块：不提供按钮，避免误以为可以删
+    head.appendChild(mk('span', 'cp-tag', t().cpBuiltinShort));
+    return;
+  }
+  const btn = document.createElement('button');
+  btn.className = 'ghost cp-del';
+  btn.type = 'button';
+  btn.textContent = cp.busy === p.name ? t().cpBusy : t().cpDelete;
+  const why = cpBlocked(p);
+  btn.disabled = !p.deletable || cp.busy !== null;
+  btn.title = why || t().cpDeleteHint(p.models.length);
+  btn.onclick = e => { e.stopPropagation(); deleteProvider(p, btn); };
+  head.appendChild(btn);
+}
 function renderModels() {
   document.getElementById('vm-note').textContent = vm.managed ? t().vmNote : t().vmUnmanaged;
   const q = document.getElementById('vm-q').value.trim().toLowerCase();
@@ -1397,6 +1688,13 @@ function renderModels() {
   for (const m of vm.models) {
     if (q && !`${m.provider} ${m.name} ${m.selector}`.toLowerCase().includes(q)) continue;
     (groups[m.provider] ??= []).push(m);
+  }
+  // models.yml 里有定义、但 omp 目录里一个模型都没有的供应商（空 provider 等）：
+  // 也必须出现在列表里，否则没有任何入口能删掉它。搜索时按名字过滤。
+  for (const p of cp.providers) {
+    if (p.name in groups) continue;
+    if (q && !p.name.toLowerCase().includes(q)) continue;
+    groups[p.name] = [];
   }
   for (const [p, list] of Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]))) {
     const wrap = document.createElement('div');
@@ -1428,13 +1726,16 @@ function renderModels() {
       };
       head.appendChild(b);
     }
+    appendProviderDelete(p, head);
     head.onclick = () => { vm.open.has(p) ? vm.open.delete(p) : vm.open.add(p); renderModels(); };
     const ul = document.createElement('div');
     ul.className = 'vm-list';
     for (const m of list) {
-      const row = document.createElement('label');
+      const row = document.createElement('div');
       const isDef = m.selector === vm.def;
       row.className = 'vm-item' + (isDef ? ' def' : '');
+      const pick = document.createElement('label');
+      pick.className = 'vm-pick';
       const cb = document.createElement('input');
       cb.type = 'checkbox'; cb.checked = vm.sel.has(m.selector) || isDef;
       cb.disabled = !vm.managed || isDef;
@@ -1442,7 +1743,18 @@ function renderModels() {
       const mn = document.createElement('span'); mn.className = 'mname'; mn.textContent = m.name;
       if (isDef) mn.dataset.tag = t().vmDefTag;
       const sl = document.createElement('span'); sl.className = 'sel'; sl.textContent = m.selector;
-      row.append(cb, mn, sl);
+      pick.append(cb, mn, sl);
+      const btn = document.createElement('button');
+      btn.className = 'ghost probe-btn';
+      btn.type = 'button';
+      btn.textContent = t().vmProbeBtn;
+      btn.setAttribute('aria-label', t().vmProbeAria(m.selector));
+      btn.disabled = !!probe.running;
+      btn.onclick = () => runModelTest(m); // 在 label 外，不会切换勾选
+      const st = document.createElement('span');
+      st.setAttribute('aria-live', 'polite');
+      renderProbeStatus(st, m);
+      row.append(pick, btn, st);
       ul.appendChild(row);
     }
     wrap.append(head, ul);
@@ -1710,6 +2022,10 @@ function renderAccounts() {
   box.appendChild(mk('div', 'vm-note', t().aIntro));
   if (d.policyError) box.appendChild(mk('div', 'u-extra', '⚠ ' + d.policyError));
   if (d.usageError) box.appendChild(mk('div', 'u-extra', '⚠ ' + d.usageError));
+  if (d.rpcError) box.appendChild(mk('div', 'u-extra', '⚠ ' + t().aRpcError(d.rpcErrorText || d.rpcError)));
+  if (d.agentDirError) box.appendChild(mk('div', 'u-extra', '⚠ ' + t().aAgentDirError(d.agentDirError)));
+  if (d.broker && d.broker.blocked) box.appendChild(mk('div', 'u-extra', '⚠ ' + t().aBrokerNote));
+  if (d.agentDir) box.appendChild(mk('div', 'vm-note', t().aAgentDir(d.agentDir)));
 
   const rv = mk('div', 'a-pol');
   rv.appendChild(mk('span', '', t().aReserve));
@@ -1746,6 +2062,7 @@ function renderAccounts() {
       const bits = [s.provider, Object.entries(s.account).map(([k, v]) => `${k}=${v}`).join(', ')];
       if (s.priority != null) bits.push(`${t().aPriority} ${s.priority}`);
       if (s.reservePct != null) bits.push(`${t().aReservePct} ${s.reservePct}`);
+      if (s.reclaimAbovePct != null) bits.push(`${t().aReclaimPct} ${s.reclaimAbovePct}`);
       row.appendChild(mk('span', '', bits.join(' · ')));
       const del = mk('button', 'ghost u-mini', t().aDelete);
       del.disabled = !d.editable;
@@ -1760,16 +2077,66 @@ function renderAccounts() {
     box.appendChild(card);
   }
 }
+/* 注销一个已存凭据（调 omp 自己的 logout RPC，软删；不取消付费订阅）。
+   确认框固定显示 provider 与账号，删除对象变化时后端会拒绝并报错，此时保留
+   页面上的条目、不刷新，让用户看清楚发生了什么。 */
+const logoutBusy = new Set();
+async function logoutAccount(provider, a, btn) {
+  // 删除对象只以 RPC 自己的 label/detail/#credentialId 为准，不用 email 猜测。
+  const org = a.orgName || a.orgId;
+  if (!confirm(t().aLogoutConfirm(provider, a.detail || a.label || t().aUnnamedAccount,
+                                  a.credentialId, org))) return;
+  const key = `${provider}#${a.credentialId}`;
+  if (logoutBusy.has(key)) return;           // 防重复提交
+  logoutBusy.add(key);
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = t().aLoggingOut;
+  try {
+    const r = await postJSON('/api/accounts/logout',
+      { provider, credentialId: a.credentialId, identityKey: a.identityKey || null });
+    if (r.ok) {
+      toast(r.remainingSource ? t().aLoggedOutLeft(provider) : t().aLoggedOut(provider));
+      ac.data = null;                        // 强制重画，避免残留旧条目
+      await loadAccounts();
+    } else {
+      toast(t().failed(r.error || r.code || 'unknown'), true);
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  } catch (e) {
+    toast(t().failed(e.message || e), true);
+    btn.disabled = false;
+    btn.textContent = label;
+  } finally {
+    logoutBusy.delete(key);
+  }
+}
 function accountBlock(provider, a, d) {
   const x = mk('div', 'a-acct');
   const id = mk('div', 'a-id');
-  id.appendChild(mk('span', '', a.email || a.accountId || '?'));
-  const meta = [a.orgName, a.plan].filter(Boolean).join(' · ');
+  id.appendChild(mk('span', '', a.email || a.accountId || a.label || t().aUnnamedAccount));
+  // omp 自己给的 detail（含 account / oauth #ID）与组织名；组织名缺失时回退到 orgId，
+  // 否则同邮箱不同组织的两行会显示成完全一样的文字。
+  const meta = [a.orgName || a.orgId, a.plan].filter(Boolean).join(' · ');
   if (meta) id.appendChild(mk('span', 'meta', meta));
+  if (a.credentialId != null) {
+    const cid = mk('span', 'a-cid', `#${a.credentialId}`);
+    cid.title = a.detail || '';
+    id.appendChild(cid);
+  }
   const off = !!(a.policy && a.policy.reservePct === 100);
   if (off) id.appendChild(mk('span', 'a-tag', t().aDisabledTag));
   else if (a.policy) id.appendChild(mk('span', 'a-tag', t().aHasPolicy));
+  if (!a.policyEditable) id.appendChild(mk('span', 'a-tag', t().aNoIdentityTag));
+  if (a.active) id.appendChild(mk('span', 'a-tag', t().aActiveTag));
+  const del = mk('button', 'ghost u-mini a-del', t().aLogout);
+  del.disabled = !a.canDelete || a.credentialId == null;
+  del.title = del.disabled ? t().aLogoutUnavailable : (a.detail || t().aLogoutNote);
+  del.onclick = () => logoutAccount(provider, a, del);
+  id.appendChild(del);
   x.appendChild(id);
+  if (a.detail) x.appendChild(mk('div', 'a-detail', a.detail));
   const rep = a.report || {};
   const seen = new Set();
   for (const l of (rep.limits || [])) {
@@ -1787,28 +2154,37 @@ function accountBlock(provider, a, d) {
 
   const pol = mk('div', 'a-pol');
   const pr = mk('input'); pr.type = 'number'; pr.step = 1;
+  pr.disabled = !a.policyEditable;
   pr.value = a.policy && a.policy.priority != null ? a.policy.priority : '';
   pr.placeholder = '0';
   const rp = mk('input'); rp.type = 'number'; rp.min = 0; rp.max = 100;
+  rp.disabled = !a.policyEditable;
   rp.value = a.policy && a.policy.reservePct != null ? a.policy.reservePct : '';
   rp.placeholder = t().aDefaultPh(d.defaultReservePct);
+  const rcl = mk('input'); rcl.type = 'number'; rcl.min = 0; rcl.max = 100;
+  rcl.disabled = !a.policyEditable;
+  rcl.value = a.policy && a.policy.reclaimAbovePct != null ? a.policy.reclaimAbovePct : '';
+  rcl.placeholder = t().aReclaimPh;
   const save = mk('button', 'u-mini', t().aSave);
   const clear = mk('button', 'ghost u-mini', t().aClear);
-  save.disabled = clear.disabled = !d.editable;
+  save.disabled = clear.disabled = !d.editable || !a.policyEditable;
   clear.disabled = clear.disabled || !a.policy;
-  const send = async (priority, reservePct) => {
+  const send = async (priority, reservePct, reclaimAbovePct) => {
     const r = await postJSON('/api/accounts/policy', { provider, identityKey: a.identityKey,
-      priority, reservePct, extra: { accountId: a.accountId } });
+      priority, reservePct, reclaimAbovePct, extra: { accountId: a.accountId } });
     if (r.error) toast(t().failed(r.error), true); else { toast(t().aSaved); loadAccounts(); }
   };
-  save.onclick = () => send(pr.value.trim(), rp.value.trim());
-  clear.onclick = () => send('', '');
+  save.onclick = () => send(pr.value.trim(), rp.value.trim(), rcl.value.trim());
+  clear.onclick = () => send('', '', '');
   const tog = mk('button', off ? 'u-mini' : 'ghost u-mini', off ? t().aEnable : t().aDisable);
-  tog.disabled = !d.editable;
+  tog.disabled = !d.editable || !a.policyEditable;
   tog.title = t().aDisableNote;
-  tog.onclick = () => send(pr.value.trim(), off ? '' : 100);
-  pol.append(mk('span', '', t().aPriority), pr, mk('span', '', t().aReservePct), rp, save, clear, tog);
-  if (!a.policy) pol.appendChild(mk('span', '', t().aNoPolicy));
+  // 停用：reserve=100 时切回阈值必须一起清（reclaim 须大于 reserve，否则写入非法）
+  tog.onclick = () => send(pr.value.trim(), off ? '' : 100, '');
+  pol.append(mk('span', '', t().aPriority), pr, mk('span', '', t().aReservePct), rp,
+             mk('span', '', t().aReclaimPct), rcl, save, clear, tog);
+  if (!a.policy && a.policyEditable) pol.appendChild(mk('span', '', t().aNoPolicy));
+  if (!a.policyEditable) pol.appendChild(mk('span', '', t().aNoIdentityNote));
   x.appendChild(pol);
   if (off) x.appendChild(mk('div', 'u-extra', t().aDisableNote));
   return x;
